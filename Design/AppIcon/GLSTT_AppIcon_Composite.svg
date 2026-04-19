@@ -1,0 +1,24 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>GLSTT App Icon Composite</title>
+  <desc>Composite preview of the speech-to-text icon artwork with no background.</desc>
+  <g id="01_SpeechBubble">
+    <path
+      d="M244 328C244 257.307 301.307 200 372 200H648C735.261 200 806 270.739 806 358V550C806 637.261 735.261 708 648 708H450L337 820C322.464 834.394 298 824.1 298 803.644V698.587C264.543 677.322 244 640.567 244 599.062V328Z"
+      fill="#FFF7EC"
+    />
+  </g>
+  <g id="02_STTWave">
+    <rect x="342" y="434" width="34" height="128" rx="17" fill="#18233B"/>
+    <rect x="392" y="368" width="42" height="260" rx="21" fill="#18233B"/>
+    <rect x="452" y="332" width="50" height="340" rx="25" fill="#18233B"/>
+    <rect x="520" y="382" width="36" height="238" rx="18" fill="#18233B"/>
+  </g>
+  <g id="03_STTText">
+    <rect x="624" y="394" width="98" height="28" rx="14" fill="#18233B"/>
+    <rect x="624" y="448" width="136" height="28" rx="14" fill="#18233B"/>
+    <rect x="624" y="502" width="86" height="28" rx="14" fill="#18233B"/>
+  </g>
+  <g id="04_CursorAccent">
+    <rect x="748" y="436" width="16" height="112" rx="8" fill="#FF6B2C"/>
+  </g>
+</svg>
