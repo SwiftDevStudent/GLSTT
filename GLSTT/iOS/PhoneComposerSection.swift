@@ -1,5 +1,7 @@
 #if os(iOS)
+import QuickLook
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PhoneComposerSection: View {
     @Environment(PhoneAppModel.self) private var appModel
@@ -17,10 +19,17 @@ struct PhoneComposerSection: View {
 private struct PhoneComposerCard: View {
     @Environment(PhoneAppModel.self) private var appModel
     @FocusState private var isEditorFocused: Bool
+    @State private var showingAudioImporter = false
+    @State private var previewedTranscriptURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             headerRow
+
+            PhoneAudioFileTranscriptionQueueView(
+                jobs: appModel.audioFileTranscriptionJobs,
+                openOutput: { previewedTranscriptURL = $0 }
+            )
 
             if hasActiveBiasPacks {
                 Text("Biasing: \(appModel.selectedBiasSummary)")
@@ -53,6 +62,27 @@ private struct PhoneComposerCard: View {
                 .environment(\.phoneEditorFocusBinding, $isEditorFocused)
         }
         .padding(.vertical, 8)
+        .fileImporter(
+            isPresented: $showingAudioImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                appModel.enqueueAudioFiles(urls)
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            appModel.enqueueAudioFiles(urls)
+            return true
+        }
+        .sheet(item: languageSelectionBinding) { selection in
+            PhoneAudioFileLanguageSelectionSheet(
+                selection: selection,
+                confirm: appModel.confirmPendingAudioFileLanguageSelection(languageID:),
+                cancel: appModel.cancelPendingAudioFileLanguageSelection
+            )
+        }
+        .quickLookPreview($previewedTranscriptURL)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -61,6 +91,17 @@ private struct PhoneComposerCard: View {
                 }
             }
         }
+    }
+
+    private var languageSelectionBinding: Binding<PendingAudioFileLanguageSelection?> {
+        Binding(
+            get: { appModel.pendingAudioFileLanguageSelection },
+            set: { selection in
+                if selection == nil {
+                    appModel.cancelPendingAudioFileLanguageSelection()
+                }
+            }
+        )
     }
 
     private var draftBinding: Binding<String> {
@@ -126,6 +167,15 @@ private struct PhoneComposerCard: View {
 
             Spacer()
 
+            Button {
+                showingAudioImporter = true
+            } label: {
+                Label("Audio", systemImage: "waveform")
+            }
+            .controlSize(.regular)
+            .buttonStyle(.bordered)
+            .disabled(appModel.isRecording)
+
             Menu {
                 Button("No Pack") {
                     appModel.clearSelectedBiasPacks()
@@ -155,6 +205,248 @@ private struct PhoneComposerCard: View {
             }
             .controlSize(.regular)
             .buttonStyle(.bordered)
+        }
+    }
+}
+
+private struct PhoneAudioFileTranscriptionQueueView: View {
+    let jobs: [AudioFileTranscriptionJob]
+    let openOutput: (URL) -> Void
+
+    private var activeJobs: [AudioFileTranscriptionJob] {
+        jobs.filter { !$0.isComplete }
+    }
+
+    private var completedJobs: [AudioFileTranscriptionJob] {
+        jobs.filter(\.isComplete)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if jobs.isEmpty {
+                Text("Drop an audio file here or tap Audio to queue a recording.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                    )
+            } else {
+                if !activeJobs.isEmpty {
+                    PhoneAudioFileTranscriptionJobSection(title: "Active Queue") {
+                        ForEach(activeJobs) { job in
+                            PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
+                        }
+                    }
+                }
+
+                if !completedJobs.isEmpty {
+                    PhoneAudioFileTranscriptionJobSection(title: "Completed Outputs") {
+                        ForEach(completedJobs) { job in
+                            PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PhoneAudioFileTranscriptionJobSection<Content: View>: View {
+    let title: String
+    let content: () -> Content
+
+    init(title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+        }
+    }
+}
+
+private struct PhoneAudioFileTranscriptionJobRow: View {
+    let job: AudioFileTranscriptionJob
+    let openOutput: (URL) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: job.iconName)
+                    .font(.title3)
+                    .foregroundStyle(iconColor)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(job.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(job.language.map { "\(job.statusTitle) - \($0.title)" } ?? job.statusTitle)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(iconColor)
+                }
+
+                Spacer()
+
+                if let outputURL = job.outputURL {
+                    Button("Open Output") {
+                        openOutput(outputURL)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            PhoneStreamingTranscriptText(text: job.statusMessage)
+
+            if !job.timedSegments.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Timestamps")
+                        .font(.footnote.weight(.semibold))
+                    ForEach(job.timedSegments.prefix(10)) { segment in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(segment.timeRangeLabel)
+                                .font(.caption.monospaced().weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 82, alignment: .leading)
+                            Text(segment.speaker.map { "\($0): \(segment.text)" } ?? segment.text)
+                                .font(.caption)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    private var iconColor: Color {
+        switch job.status {
+        case .finished:
+            return .green
+        case .failed:
+            return .orange
+        case .preparing, .transcribing:
+            return .blue
+        case .pending:
+            return .secondary
+        }
+    }
+}
+
+private struct PhoneAudioFileLanguageSelectionSheet: View {
+    let selection: PendingAudioFileLanguageSelection
+    let confirm: (String) -> Void
+    let cancel: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedLanguageID: String
+
+    init(
+        selection: PendingAudioFileLanguageSelection,
+        confirm: @escaping (String) -> Void,
+        cancel: @escaping () -> Void
+    ) {
+        self.selection = selection
+        self.confirm = confirm
+        self.cancel = cancel
+        _selectedLanguageID = State(initialValue: selection.defaultLanguageID)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Language", selection: $selectedLanguageID) {
+                        ForEach(selection.languageOptions) { language in
+                            Text(language.title)
+                                .tag(language.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if let selectedLanguage {
+                        Text(selectedLanguage.detail)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text(selection.title)
+                }
+            }
+            .navigationTitle("Transcription Language")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        cancel()
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Queue") {
+                        confirm(selectedLanguageID)
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private var selectedLanguage: AudioTranscriptionLanguageOption? {
+        selection.languageOptions.first { $0.id == selectedLanguageID }
+    }
+}
+
+private struct PhoneStreamingTranscriptText: View {
+    let text: String
+    private let bottomID = "phone-streaming-transcript-bottom"
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(text)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(bottomID)
+                }
+            }
+            .frame(maxHeight: 140)
+            .onAppear {
+                scrollToBottom(proxy)
+            }
+            .onChange(of: text) { _, _ in
+                scrollToBottom(proxy)
+            }
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.16)) {
+            proxy.scrollTo(bottomID, anchor: .bottom)
         }
     }
 }

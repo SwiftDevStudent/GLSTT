@@ -3,20 +3,74 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class HUDPanelController {
-    private let panel: NSPanel
+final class HUDPanelController: NSObject, NSWindowDelegate {
+    private static let statusOriginXKey = "glstt.hud.status.origin.x"
+    private static let statusOriginYKey = "glstt.hud.status.origin.y"
+
+    private let statusPanel: NSPanel
+    private let messagePanel: NSPanel
     private weak var model: AppModel?
-    private var lastPanelSize: CGSize?
+    private var isApplyingSavedFrame = false
 
     init(model: AppModel) {
         self.model = model
-        panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: model.hudPanelSize),
+        statusPanel = Self.makePanel(size: model.hudStatusPanelSize)
+        messagePanel = Self.makePanel(size: CGSize(width: 420, height: 76))
+
+        super.init()
+
+        configureStatusPanel()
+        configureMessagePanel()
+
+        statusPanel.contentView = NSHostingView(rootView: HUDView().environment(model))
+        messagePanel.contentView = NSHostingView(rootView: HUDMessageView().environment(model))
+    }
+
+    func show() {
+        updateStatusPanelFrame()
+        statusPanel.orderFrontRegardless()
+        updateMessagePanelVisibility()
+    }
+
+    func hide() {
+        statusPanel.orderOut(nil)
+        messagePanel.orderOut(nil)
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard !isApplyingSavedFrame,
+              let movedPanel = notification.object as? NSPanel,
+              movedPanel === statusPanel
+        else {
+            return
+        }
+
+        UserDefaults.standard.set(statusPanel.frame.origin.x, forKey: Self.statusOriginXKey)
+        UserDefaults.standard.set(statusPanel.frame.origin.y, forKey: Self.statusOriginYKey)
+        updateMessagePanelVisibility()
+    }
+
+    private static func makePanel(size: CGSize) -> NSPanel {
+        NSPanel(
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+    }
 
+    private func configureStatusPanel() {
+        configurePanel(statusPanel)
+        statusPanel.isMovableByWindowBackground = true
+        statusPanel.delegate = self
+    }
+
+    private func configureMessagePanel() {
+        configurePanel(messagePanel)
+        messagePanel.delegate = self
+    }
+
+    private func configurePanel(_ panel: NSPanel) {
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
         panel.level = .statusBar
@@ -27,45 +81,89 @@ final class HUDPanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
         panel.ignoresMouseEvents = false
         panel.animationBehavior = .utilityWindow
-
-        panel.contentView = NSHostingView(rootView: HUDView().environment(model))
     }
 
-    func show() {
-        updateSizeIfNeeded()
-        updatePosition()
-        panel.orderFrontRegardless()
-    }
-
-    func hide() {
-        panel.orderOut(nil)
-    }
-
-    private func updateSizeIfNeeded() {
+    private func updateStatusPanelFrame() {
         guard let model else { return }
-        let desiredSize = model.hudPanelSize
-        guard lastPanelSize != desiredSize else { return }
-        lastPanelSize = desiredSize
-
-        let origin = panel.frame.origin
-        DispatchQueue.main.async { [weak self] in
-            self?.panel.setFrame(NSRect(origin: origin, size: desiredSize), display: true)
+        let desiredSize = model.hudStatusPanelSize
+        guard desiredSize != .zero else {
+            hide()
+            return
         }
-    }
 
-    private func updatePosition() {
-        let mouseLocation = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) ?? NSScreen.main
+        let screen = NSScreen.main ?? NSScreen.screens.first
         guard let screen else { return }
 
+        let savedOrigin = savedStatusOrigin()
+        let origin = clamp(
+            savedOrigin ?? defaultStatusOrigin(for: desiredSize, on: screen),
+            size: desiredSize,
+            screen: screen
+        )
+        let frame = NSRect(origin: origin, size: desiredSize)
+
+        guard statusPanel.frame != frame else { return }
+        isApplyingSavedFrame = true
+        statusPanel.setFrame(frame, display: true)
+        isApplyingSavedFrame = false
+    }
+
+    private func updateMessagePanelVisibility() {
+        guard let model,
+              case .message = model.hudMode
+        else {
+            messagePanel.orderOut(nil)
+            return
+        }
+
+        let desiredSize = CGSize(width: 420, height: 76)
+        let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(statusPanel.frame) }) ?? NSScreen.main
+        guard let screen else { return }
+
+        let origin = clamp(
+            CGPoint(
+                x: statusPanel.frame.midX - (desiredSize.width / 2),
+                y: statusPanel.frame.minY - desiredSize.height - 10
+            ),
+            size: desiredSize,
+            screen: screen
+        )
+        let frame = NSRect(origin: origin, size: desiredSize)
+
+        if messagePanel.frame != frame {
+            messagePanel.setFrame(frame, display: true)
+        }
+        messagePanel.orderFrontRegardless()
+    }
+
+    private func defaultStatusOrigin(for size: CGSize, on screen: NSScreen) -> CGPoint {
         let visibleFrame = screen.visibleFrame
-        let size = panel.frame.size
-        let origin = CGPoint(
+        return CGPoint(
             x: visibleFrame.midX - (size.width / 2),
             y: visibleFrame.maxY - size.height - 36
         )
+    }
 
-        panel.setFrameOrigin(origin)
+    private func savedStatusOrigin() -> CGPoint? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.statusOriginXKey) != nil,
+              defaults.object(forKey: Self.statusOriginYKey) != nil
+        else {
+            return nil
+        }
+
+        return CGPoint(
+            x: defaults.double(forKey: Self.statusOriginXKey),
+            y: defaults.double(forKey: Self.statusOriginYKey)
+        )
+    }
+
+    private func clamp(_ origin: CGPoint, size: CGSize, screen: NSScreen) -> CGPoint {
+        let frame = screen.visibleFrame
+        return CGPoint(
+            x: min(max(origin.x, frame.minX), frame.maxX - size.width),
+            y: min(max(origin.y, frame.minY), frame.maxY - size.height)
+        )
     }
 }
 
@@ -82,23 +180,11 @@ private struct HUDView: View {
 
     private var compactBody: some View {
         VStack(spacing: 10) {
-            CompactWaveBadge(level: model.audioLevel, tint: model.hudAccentColor)
-
-            if case .message = model.hudMode {
-                Text(model.hudMessage)
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
+            CompactWaveBadge(level: statusAudioLevel, tint: statusAccentColor)
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .onTapGesture {
-            guard model.canDismissHUD else { return }
-            model.dismissHUD()
-        }
         .background(backgroundShape)
         .padding(6)
     }
@@ -116,30 +202,21 @@ private struct HUDView: View {
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                InlineWaveGlyph(level: model.audioLevel, tint: model.hudAccentColor)
+                InlineWaveGlyph(level: statusAudioLevel, tint: statusAccentColor)
 
                 Spacer()
 
-                if model.isHUDSpinning {
+                if statusIsSpinning {
                     ProgressView()
                         .controlSize(.small)
-                } else if model.canDismissHUD {
-                    Button {
-                        model.dismissHUD()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18, height: 18)
-                    }
-                    .buttonStyle(.plain)
                 }
             }
 
-            Text(model.hudTitle)
+            Text(statusTitle)
                 .font(.system(.headline, design: .rounded, weight: .semibold))
 
             if model.showsTranscriptHUD,
+               statusShowsTranscript,
                !model.finalizedTranscript.isEmpty || !model.volatileTranscript.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.finalizedTranscript)
@@ -155,14 +232,14 @@ private struct HUDView: View {
                     .lineLimit(8)
                     .fixedSize(horizontal: false, vertical: true)
             } else if model.showsTranscriptHUD {
-                Text(model.hudMessage)
+                Text(statusMessage)
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if !model.hudMessage.isEmpty {
-                Text(model.hudMessage)
+            } else if !statusMessage.isEmpty {
+                Text(statusMessage)
                     .font(.system(.caption, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
@@ -173,10 +250,6 @@ private struct HUDView: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .onTapGesture {
-            guard model.canDismissHUD else { return }
-            model.dismissHUD()
-        }
         .background(backgroundShape)
         .padding(8)
     }
@@ -186,8 +259,163 @@ private struct HUDView: View {
             .fill(.ultraThinMaterial)
             .overlay {
                 RoundedRectangle(cornerRadius: model.hudDisplayMode == .compact ? 28 : 24, style: .continuous)
-                    .strokeBorder(model.hudBorderColor, lineWidth: 1)
+                    .strokeBorder(statusAccentColor.opacity(0.35), lineWidth: 1)
             }
+    }
+
+    private var statusTitle: String {
+        switch model.hudMode {
+        case .recording:
+            return model.hudDisplayMode == .compact ? "" : "Listening"
+        case .finalizing:
+            return model.hudDisplayMode == .compact ? "" : "Finalizing Transcript"
+        case .hidden, .message:
+            return "Not Listening"
+        }
+    }
+
+    private var statusMessage: String {
+        switch model.hudMode {
+        case .recording:
+            return model.hudMessage
+        case .finalizing:
+            return model.hudMessage
+        case .hidden, .message:
+            return "Hold \(model.holdTriggerKey.shortTitle) to start dictation."
+        }
+    }
+
+    private var statusAccentColor: Color {
+        switch model.hudMode {
+        case .recording:
+            return .green
+        case .finalizing:
+            return .orange
+        case .hidden, .message:
+            return .secondary
+        }
+    }
+
+    private var statusAudioLevel: Double {
+        switch model.hudMode {
+        case .recording, .finalizing:
+            return model.audioLevel
+        case .hidden, .message:
+            return 0
+        }
+    }
+
+    private var statusIsSpinning: Bool {
+        if case .finalizing = model.hudMode { return true }
+        return false
+    }
+
+    private var statusShowsTranscript: Bool {
+        switch model.hudMode {
+        case .recording, .finalizing:
+            return true
+        case .hidden, .message:
+            return false
+        }
+    }
+}
+
+private struct HUDMessageView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: iconName)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(tint.opacity(0.16))
+                )
+
+            Text(message)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if model.canDismissHUD {
+                Button {
+                    model.dismissHUD()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(tint.opacity(0.45), lineWidth: 1)
+                }
+        )
+        .padding(6)
+    }
+
+    private var message: String {
+        guard case .message(let message, _) = model.hudMode else { return "" }
+        return message
+    }
+
+    private var isError: Bool {
+        guard case .message(_, let isError) = model.hudMode else { return false }
+        return isError
+    }
+
+    private var tint: Color {
+        switch messageKind {
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        case .warning:
+            return .orange
+        }
+    }
+
+    private var iconName: String {
+        switch messageKind {
+        case .success:
+            return "checkmark"
+        case .failure:
+            return "xmark"
+        case .warning:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private var messageKind: MessageKind {
+        guard isError else { return .success }
+
+        let lowercasedMessage = message.lowercased()
+        if lowercasedMessage.contains("could not confirm")
+            || lowercasedMessage.contains("failed")
+            || lowercasedMessage.contains("unable to insert")
+            || lowercasedMessage.contains("no editable target") {
+            return .failure
+        }
+
+        return .warning
+    }
+
+    private enum MessageKind {
+        case success
+        case warning
+        case failure
     }
 }
 

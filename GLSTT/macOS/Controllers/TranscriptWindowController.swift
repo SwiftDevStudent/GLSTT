@@ -39,32 +39,35 @@ private struct TranscriptWindowView: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Transcript")
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Recent Transcripts")
                 .font(.system(.title2, design: .rounded, weight: .semibold))
+                .padding([.top, .horizontal], 20)
+                .padding(.bottom, 14)
 
             ScrollView {
-                Text(appModel.lastTranscript.isEmpty ? "Nothing captured yet." : appModel.lastTranscript)
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(appModel.lastTranscript.isEmpty ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
+                MacTranscriptHistoryList(
+                    entries: appModel.transcriptHistory,
+                    emptyMessage: "Use your shortcut to start dictation and your recent captures will show up here.",
+                    copy: appModel.copyTranscript
+                )
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
             }
 
+            Divider()
+
             HStack {
-                Button("Copy Transcript") {
+                Button("Copy Latest", systemImage: "doc.on.doc") {
                     appModel.copyLastTranscript()
                 }
+                .disabled(appModel.lastTranscript.isEmpty)
 
                 Spacer()
             }
+            .padding(14)
+            .background(.regularMaterial)
         }
-        .padding(20)
     }
 }
 #endif

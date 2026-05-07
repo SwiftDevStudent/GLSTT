@@ -11,11 +11,13 @@ Use this skill for changes to the `GLSTT` app.
 
 - Repo root: `/Users/naftali/Developer/GLSTT/GLSTT`
 - Project: `GLSTT.xcodeproj`
-- Target: `GLSTT`
+- Main target: `GLSTT`
+- Share extension target: `GLSTTAudioFileExtension`
 - Scheme: `GLSTT`
 - App type:
   - macOS menu bar utility with a floating HUD
   - iPhone in-app dictation experience
+  - shared audio-file transcription path with a share extension handoff
 
 ## Build Workflow
 
@@ -55,6 +57,8 @@ Use this skill for changes to the `GLSTT` app.
   - `DictationTranscriber` when contextual bias is needed
   - `AssetInventory`
   - `AnalysisContext.contextualStrings`
+- Long audio files should be transcribed in the main app process, not inside the extension. The extension copies audio into the app group container and opens `glstt://transcribe-audio`.
+- Audio-file transcription supports file picker, drag-and-drop, queueing, text output files, and in-app timestamp segment display.
 - Respect Apple’s contextual bias guidance:
   - short terms
   - ideally one-to-two-word phrases

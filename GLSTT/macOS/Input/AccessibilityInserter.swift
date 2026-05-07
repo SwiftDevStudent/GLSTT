@@ -9,6 +9,11 @@ enum AccessibilityInsertionStrategy: Equatable {
     case noTarget
 }
 
+enum AccessibilityInsertionVerification: Equatable {
+    case confirmed
+    case unverified
+}
+
 struct AccessibilityInsertionTarget: Equatable {
     let processIdentifier: pid_t
 }
@@ -44,7 +49,7 @@ struct AccessibilityInsertionPlanner {
 }
 
 enum AccessibilityInsertionResult: Equatable {
-    case inserted(AccessibilityInsertionStrategy)
+    case inserted(AccessibilityInsertionStrategy, AccessibilityInsertionVerification)
     case noTarget
     case accessibilityPermissionRequired
     case failed(String)
@@ -80,7 +85,7 @@ final class AccessibilityInserter {
 
         guard let element = focusedElement() else {
             if await pasteIntoFocusedApp(text: text) {
-                return .inserted(.pasteFallback)
+                return .inserted(.pasteFallback, await verifyInsertedText(text, using: nil))
             }
 
             return .noTarget
@@ -93,22 +98,22 @@ final class AccessibilityInserter {
         case .selectedText:
             let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
             if result == .success {
-                return .inserted(.selectedText)
+                return .inserted(.selectedText, await verifyInsertedText(text, using: element))
             }
 
         case .valueAndRange:
             if replaceSelection(in: element, with: text) {
-                return .inserted(.valueAndRange)
+                return .inserted(.valueAndRange, await verifyInsertedText(text, using: element))
             }
 
         case .pasteFallback, .noTarget:
             if await pasteIntoFocusedApp(text: text) {
-                return .inserted(.pasteFallback)
+                return .inserted(.pasteFallback, await verifyInsertedText(text, using: element))
             }
         }
 
         if await pasteIntoFocusedApp(text: text) {
-            return .inserted(.pasteFallback)
+            return .inserted(.pasteFallback, await verifyInsertedText(text, using: element))
         }
 
         if strategy == .noTarget {
@@ -116,6 +121,10 @@ final class AccessibilityInserter {
         }
 
         return .failed("Unable to insert into the focused field.")
+    }
+
+    func verifyLiveInsertion(text: String, session: LiveInsertionSession) async -> Bool {
+        await verifyInsertedText(text, using: session.element) == .confirmed
     }
 
     func beginLiveInsertionSession() -> LiveInsertionSession? {
@@ -482,6 +491,40 @@ final class AccessibilityInserter {
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
         return true
+    }
+
+    private func verifyInsertedText(_ text: String, using element: AXUIElement?) async -> AccessibilityInsertionVerification {
+        try? await Task.sleep(for: .milliseconds(1_100))
+
+        if let element, elementContainsInsertedText(text, element) {
+            return .confirmed
+        }
+
+        if let focusedElement = focusedElement(), elementContainsInsertedText(text, focusedElement) {
+            return .confirmed
+        }
+
+        return .unverified
+    }
+
+    private func elementContainsInsertedText(_ text: String, _ element: AXUIElement) -> Bool {
+        let expected = normalizedInsertedText(text)
+        guard !expected.isEmpty else { return false }
+
+        let values = [
+            copyStringAttribute(kAXValueAttribute as CFString, from: element),
+            copyStringAttribute(kAXSelectedTextAttribute as CFString, from: element)
+        ].compactMap { $0 }
+
+        return values.contains { normalizedInsertedText($0).contains(expected) }
+    }
+
+    private func normalizedInsertedText(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
 

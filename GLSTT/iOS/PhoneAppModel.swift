@@ -19,6 +19,8 @@ final class PhoneAppModel {
     private(set) var importedVocabulary = ImportedVocabularySnapshot()
     private(set) var lastTranscript = ""
     private(set) var audioLevel: Double = 0
+    private(set) var audioFileTranscriptionJobs: [AudioFileTranscriptionJob] = []
+    private(set) var pendingAudioFileLanguageSelection: PendingAudioFileLanguageSelection?
     private(set) var selectedBuiltInPackIDs = Set<String>()
     private(set) var selectedImportedVocabularyListIDs = Set<UUID>()
     var alertMessage: String?
@@ -35,6 +37,7 @@ final class PhoneAppModel {
     @ObservationIgnored private let vocabularyStore: ImportedVocabularyStore
     @ObservationIgnored private let transcriptStore: TranscriptHistoryStore
     @ObservationIgnored private var sessionBaseText = ""
+    @ObservationIgnored private var audioFileTranscriptionTask: Task<Void, Never>?
 
     init() {
         vocabularyStore = ImportedVocabularyStore(storageKey: Self.importedVocabularyListsKey)
@@ -59,6 +62,14 @@ final class PhoneAppModel {
 
     var isRecording: Bool {
         speechController.isRecording
+    }
+
+    var isAudioFileTranscriptionActive: Bool {
+        audioFileTranscriptionJobs.contains { $0.isActive }
+    }
+
+    var activeAudioFileTranscriptionJob: AudioFileTranscriptionJob? {
+        audioFileTranscriptionJobs.first { $0.isActive }
     }
 
     var importedVocabularyWordCount: Int {
@@ -123,6 +134,88 @@ final class PhoneAppModel {
                 await startRecording()
             }
         }
+    }
+
+    func handleIncomingAudioURL(_ url: URL) {
+        if let request = AudioFileTranscriptionRequestStore.request(from: url) {
+            Task { @MainActor in
+                await requestAudioFileLanguageSelection(
+                    for: [PendingAudioFileLanguageSelection.File(url: request.fileURL, displayName: request.displayName)]
+                )
+            }
+            return
+        }
+
+        guard url.isFileURL else { return }
+        enqueueAudioFiles([url])
+    }
+
+    func transcribeAudioFile(from url: URL) {
+        enqueueAudioFiles([url])
+    }
+
+    func enqueueAudioFiles(_ urls: [URL]) {
+        Task { @MainActor in
+            await requestAudioFileLanguageSelection(for: urls)
+        }
+    }
+
+    private func requestAudioFileLanguageSelection(for urls: [URL]) async {
+        await requestAudioFileLanguageSelection(
+            for: urls
+                .filter(\.isFileURL)
+                .map { PendingAudioFileLanguageSelection.File(url: $0, displayName: $0.lastPathComponent) }
+        )
+    }
+
+    func confirmPendingAudioFileLanguageSelection(languageID: String) {
+        guard let pendingAudioFileLanguageSelection else { return }
+        guard let language = pendingAudioFileLanguageSelection.languageOptions.first(where: { $0.id == languageID }) else {
+            alertMessage = "Choose a supported Apple speech language for that audio file."
+            return
+        }
+
+        self.pendingAudioFileLanguageSelection = nil
+        for file in pendingAudioFileLanguageSelection.files {
+            enqueueAudioFile(at: file.url, displayName: file.displayName, language: language)
+        }
+    }
+
+    func cancelPendingAudioFileLanguageSelection() {
+        pendingAudioFileLanguageSelection = nil
+    }
+
+    private func requestAudioFileLanguageSelection(for files: [PendingAudioFileLanguageSelection.File]) async {
+        guard !speechController.isRecording else {
+            alertMessage = "Stop dictation before queueing audio files."
+            return
+        }
+
+        guard !files.isEmpty else { return }
+
+        let languageOptions = await AudioTranscriptionLanguageOption.supportedOptions()
+        guard let defaultLanguageID = AudioTranscriptionLanguageOption.defaultLanguageID(in: languageOptions) else {
+            alertMessage = "Apple did not report any supported file transcription languages on this device."
+            return
+        }
+
+        let pendingFiles = (pendingAudioFileLanguageSelection?.files ?? []) + files
+        pendingAudioFileLanguageSelection = PendingAudioFileLanguageSelection(
+            files: pendingFiles,
+            languageOptions: languageOptions,
+            defaultLanguageID: defaultLanguageID
+        )
+    }
+
+    private func enqueueAudioFile(
+        at url: URL,
+        displayName: String,
+        language: AudioTranscriptionLanguageOption
+    ) {
+        audioFileTranscriptionJobs.append(
+            AudioFileTranscriptionJob(sourceURL: url, displayName: displayName, language: language)
+        )
+        startAudioFileQueueIfNeeded()
     }
 
     func saveCurrentDraft() {
@@ -203,6 +296,12 @@ final class PhoneAppModel {
     private func startRecording() async {
         alertMessage = nil
         refreshPermissions()
+
+        guard !isAudioFileTranscriptionActive else {
+            alertMessage = "Finish the current audio file transcription before starting dictation."
+            return
+        }
+
         sessionBaseText = draftText
         finalizedTranscript = ""
         volatileTranscript = ""
@@ -220,6 +319,94 @@ final class PhoneAppModel {
             refreshPermissions()
             alertMessage = error.localizedDescription
         }
+    }
+
+    private func startAudioFileQueueIfNeeded() {
+        guard audioFileTranscriptionTask == nil else { return }
+
+        audioFileTranscriptionTask = Task { [weak self] in
+            await self?.processAudioFileQueue()
+        }
+    }
+
+    private func processAudioFileQueue() async {
+        defer {
+            audioFileTranscriptionTask = nil
+            if audioFileTranscriptionJobs.contains(where: { $0.status == .pending }) {
+                startAudioFileQueueIfNeeded()
+            }
+        }
+
+        while let jobIndex = audioFileTranscriptionJobs.firstIndex(where: { $0.status == .pending }) {
+            let job = audioFileTranscriptionJobs[jobIndex]
+            await runAudioFileTranscription(job)
+        }
+    }
+
+    private func runAudioFileTranscription(_ job: AudioFileTranscriptionJob) async {
+        alertMessage = nil
+        sessionBaseText = draftText
+        finalizedTranscript = ""
+        volatileTranscript = ""
+        audioLevel = 0
+        updateAudioFileJob(job.id) { $0.status = .preparing }
+
+        do {
+            let result = try await speechController.transcribeAudioFile(
+                at: job.sourceURL,
+                locale: job.language?.locale,
+                contextualStrings: VocabularyImporter.mergedContextualStrings(
+                    importedLists: selectedImportedVocabularyLists,
+                    runtimeWords: selectedBuiltInPacks.flatMap(\.words)
+                )
+            ) { [weak self] assembly in
+                self?.updateAudioFileJob(job.id) {
+                    $0.status = .transcribing
+                    $0.preview = assembly.combinedText
+                }
+            }
+
+            let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                updateAudioFileJob(job.id) {
+                    $0.status = .failed("No speech was found in that file.")
+                }
+                alertMessage = "No speech was found in \(job.displayName)."
+                return
+            }
+
+            let outputURL = try AudioTranscriptOutputStore.saveTranscript(
+                trimmed,
+                audioFileName: job.displayName
+            )
+
+            finalizedTranscript = trimmed
+            volatileTranscript = ""
+            draftText = mergedText(base: sessionBaseText, transcript: trimmed)
+            lastTranscript = trimmed
+            appendHistory(trimmed)
+            updateAudioFileJob(job.id) {
+                $0.status = .finished
+                $0.preview = trimmed
+                $0.transcript = trimmed
+                $0.timedSegments = result.segments
+                $0.outputURL = outputURL
+            }
+        } catch {
+            audioLevel = 0
+            updateAudioFileJob(job.id) {
+                $0.status = .failed(error.localizedDescription)
+            }
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    private func updateAudioFileJob(
+        _ id: AudioFileTranscriptionJob.ID,
+        mutate: (inout AudioFileTranscriptionJob) -> Void
+    ) {
+        guard let index = audioFileTranscriptionJobs.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&audioFileTranscriptionJobs[index])
     }
 
     private func stopRecording() async {

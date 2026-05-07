@@ -6,6 +6,8 @@ struct MacTranscriptHistoryList: View {
     let emptyTitle: String
     let emptyMessage: String
     let compact: Bool
+    let copy: (TranscriptHistoryEntry) -> Void
+    let latestAlwaysExpanded: Bool
 
     @State private var expandedEntryIDs = Set<TranscriptHistoryEntry.ID>()
 
@@ -13,12 +15,16 @@ struct MacTranscriptHistoryList: View {
         entries: [TranscriptHistoryEntry],
         emptyTitle: String = "No transcripts yet",
         emptyMessage: String,
-        compact: Bool = false
+        compact: Bool = false,
+        latestAlwaysExpanded: Bool = true,
+        copy: @escaping (TranscriptHistoryEntry) -> Void = { _ in }
     ) {
         self.entries = entries
         self.emptyTitle = emptyTitle
         self.emptyMessage = emptyMessage
         self.compact = compact
+        self.copy = copy
+        self.latestAlwaysExpanded = latestAlwaysExpanded
     }
 
     var body: some View {
@@ -34,30 +40,59 @@ struct MacTranscriptHistoryList: View {
                 ForEach(entries) { entry in
                     MacTranscriptHistoryDisclosureRow(
                         entry: entry,
-                        isExpanded: expandedEntryIDs.contains(entry.id),
-                        compact: compact
+                        isExpanded: isExpanded(entry),
+                        canToggle: canToggle(entry),
+                        compact: compact,
+                        copy: {
+                            copy(entry)
+                        }
                     ) {
                         toggle(entry)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .onAppear(perform: expandLatestEntry)
+            .onChange(of: entries.first?.id) { _, _ in
+                expandLatestEntry()
+            }
         }
     }
 
+    private func isExpanded(_ entry: TranscriptHistoryEntry) -> Bool {
+        if latestAlwaysExpanded, entry.id == entries.first?.id {
+            return true
+        }
+
+        return expandedEntryIDs.contains(entry.id)
+    }
+
+    private func canToggle(_ entry: TranscriptHistoryEntry) -> Bool {
+        !(latestAlwaysExpanded && entry.id == entries.first?.id)
+    }
+
     private func toggle(_ entry: TranscriptHistoryEntry) {
+        guard canToggle(entry) else { return }
+
         if expandedEntryIDs.contains(entry.id) {
             expandedEntryIDs.remove(entry.id)
         } else {
             expandedEntryIDs.insert(entry.id)
         }
     }
+
+    private func expandLatestEntry() {
+        guard latestAlwaysExpanded, let id = entries.first?.id else { return }
+        expandedEntryIDs.insert(id)
+    }
 }
 
 private struct MacTranscriptHistoryDisclosureRow: View {
     let entry: TranscriptHistoryEntry
     let isExpanded: Bool
+    let canToggle: Bool
     let compact: Bool
+    let copy: () -> Void
     let toggle: () -> Void
 
     var body: some View {
@@ -76,8 +111,8 @@ private struct MacTranscriptHistoryDisclosureRow: View {
 
                 Spacer(minLength: 8)
 
-                Button(action: toggle) {
-                    Label(isExpanded ? "Hide" : "Show", systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                Button(action: copy) {
+                    Label("Copy", systemImage: "doc.on.doc")
                         .labelStyle(.titleAndIcon)
                         .font(.system(.caption, design: .rounded, weight: .semibold))
                         .padding(.horizontal, 10)
@@ -88,6 +123,21 @@ private struct MacTranscriptHistoryDisclosureRow: View {
                         )
                 }
                 .buttonStyle(.plain)
+
+                if canToggle {
+                    Button(action: toggle) {
+                        Label(isExpanded ? "Hide" : "Show", systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.primary.opacity(0.08))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
             if isExpanded {

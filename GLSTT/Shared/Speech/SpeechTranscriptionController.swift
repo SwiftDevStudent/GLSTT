@@ -17,6 +17,8 @@ enum SpeechTranscriptionError: LocalizedError {
     case notRecording
     case failedToStartAudioEngine(String)
     case assetInstallationFailed(String)
+    case audioFileUnavailable(String)
+    case audioFileTranscriptionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +42,10 @@ enum SpeechTranscriptionError: LocalizedError {
             return "Failed to start audio capture: \(detail)"
         case .assetInstallationFailed(let detail):
             return "Failed to install Apple speech assets: \(detail)"
+        case .audioFileUnavailable(let detail):
+            return "Unable to open that audio file: \(detail)"
+        case .audioFileTranscriptionFailed(let detail):
+            return "Unable to transcribe that audio file: \(detail)"
         }
     }
 }
@@ -61,6 +67,12 @@ final class SpeechTranscriptionController {
     private var converter: AVAudioConverter?
     private let microphoneProbe = AVAudioEngine()
     private var captureProbeSession: AVCaptureSession?
+
+    private struct SplitAudioChannels {
+        let directoryURL: URL
+        let person1URL: URL
+        let person2URL: URL
+    }
 
     func requestSpeechAndMicrophoneAccess() async {
         _ = await requestSpeechAccessIfNeeded()
@@ -202,6 +214,284 @@ final class SpeechTranscriptionController {
         return text
     }
 
+    func transcribeAudioFile(
+        at url: URL,
+        locale requestedLocale: Locale? = nil,
+        contextualStrings: [String] = [],
+        onTranscriptUpdate fileTranscriptUpdateHandler: ((TranscriptAssembly) -> Void)? = nil
+    ) async throws -> AudioFileTranscriptionResult {
+        guard !isRecording else {
+            throw SpeechTranscriptionError.alreadyRecording
+        }
+
+        guard await requestSpeechAccessIfNeeded() else {
+            throw SpeechTranscriptionError.speechPermissionDenied
+        }
+
+        let didAccessSecurityScopedResource = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessSecurityScopedResource {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let audioFile: AVAudioFile
+        do {
+            audioFile = try AVAudioFile(forReading: url)
+        } catch {
+            throw SpeechTranscriptionError.audioFileUnavailable(error.localizedDescription)
+        }
+
+        guard isUsableRecordingFormat(audioFile.processingFormat) else {
+            throw SpeechTranscriptionError.unsupportedAudioFormat
+        }
+
+        if audioFile.processingFormat.channelCount >= 2 {
+            do {
+                let splitChannels = try splitFirstTwoAudioChannels(from: audioFile)
+                defer {
+                    try? FileManager.default.removeItem(at: splitChannels.directoryURL)
+                }
+
+                return try await transcribeSplitAudioChannels(
+                    splitChannels,
+                    locale: requestedLocale,
+                    contextualStrings: contextualStrings,
+                    updateHandler: fileTranscriptUpdateHandler
+                )
+            } catch {
+                audioFile.framePosition = 0
+            }
+        }
+
+        return try await transcribePreparedAudioFile(
+            audioFile,
+            locale: requestedLocale,
+            contextualStrings: contextualStrings,
+            updateHandler: fileTranscriptUpdateHandler
+        )
+    }
+
+    private func transcribeSplitAudioChannels(
+        _ channels: SplitAudioChannels,
+        locale requestedLocale: Locale?,
+        contextualStrings: [String],
+        updateHandler: ((TranscriptAssembly) -> Void)?
+    ) async throws -> AudioFileTranscriptionResult {
+        let person1File = try AVAudioFile(forReading: channels.person1URL)
+        var person1Preview = ""
+        let person1Result = try await transcribePreparedAudioFile(
+            person1File,
+            locale: requestedLocale,
+            contextualStrings: contextualStrings
+        ) { [weak self] assembly in
+            person1Preview = assembly.combinedText
+            self?.emitFileTranscriptUpdate(
+                Self.speakerTranscript(person1: person1Preview, person2: ""),
+                to: updateHandler
+            )
+        }
+
+        let person2File = try AVAudioFile(forReading: channels.person2URL)
+        var person2Preview = ""
+        let person2Result = try await transcribePreparedAudioFile(
+            person2File,
+            locale: requestedLocale,
+            contextualStrings: contextualStrings
+        ) { [weak self] assembly in
+            person2Preview = assembly.combinedText
+            self?.emitFileTranscriptUpdate(
+                Self.speakerTranscript(person1: person1Result.text, person2: person2Preview),
+                to: updateHandler
+            )
+        }
+
+        let text = Self.speakerTranscript(person1: person1Result.text, person2: person2Result.text)
+        let segments = person1Result.segments.map { segment in
+            TimedTranscriptSegment(
+                speaker: "Person 1",
+                startTime: segment.startTime,
+                endTime: segment.endTime,
+                text: segment.text
+            )
+        } + person2Result.segments.map { segment in
+            TimedTranscriptSegment(
+                speaker: "Person 2",
+                startTime: segment.startTime,
+                endTime: segment.endTime,
+                text: segment.text
+            )
+        }
+
+        return AudioFileTranscriptionResult(text: text, segments: segments)
+    }
+
+    private func transcribePreparedAudioFile(
+        _ audioFile: AVAudioFile,
+        locale requestedLocale: Locale?,
+        contextualStrings: [String],
+        updateHandler fileTranscriptUpdateHandler: ((TranscriptAssembly) -> Void)?
+    ) async throws -> AudioFileTranscriptionResult {
+        guard let locale = await DictationTranscriber.supportedLocale(equivalentTo: requestedLocale ?? Locale.current) else {
+            throw SpeechTranscriptionError.unsupportedLocale
+        }
+
+        let transcriber = DictationTranscriber(
+            locale: locale,
+            contentHints: [],
+            transcriptionOptions: [],
+            reportingOptions: [],
+            attributeOptions: [.audioTimeRange]
+        )
+
+        do {
+            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                try await request.downloadAndInstall()
+            }
+        } catch {
+            throw SpeechTranscriptionError.assetInstallationFailed(error.localizedDescription)
+        }
+
+        let preferredAudioFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+            compatibleWith: [transcriber],
+            considering: audioFile.processingFormat
+        )
+        let targetAudioFormat: AVAudioFormat?
+        if let preferredAudioFormat {
+            targetAudioFormat = preferredAudioFormat
+        } else {
+            targetAudioFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
+        }
+
+        guard let targetAudioFormat else {
+            throw SpeechTranscriptionError.unsupportedAudioFormat
+        }
+
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        if !contextualStrings.isEmpty {
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = Array(contextualStrings.prefix(100))
+            try await analyzer.setContext(context)
+        }
+        try await analyzer.prepareToAnalyze(in: targetAudioFormat)
+
+        fileTranscriptUpdateHandler?(TranscriptAssembly())
+        let resultsTask = consumeFileResults(
+            from: transcriber,
+            updateHandler: fileTranscriptUpdateHandler
+        )
+
+        do {
+            _ = try await analyzer.analyzeSequence(from: audioFile)
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            let fileTranscriptAssembly = try await resultsTask.value
+            return AudioFileTranscriptionResult(
+                text: fileTranscriptAssembly.text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                ,
+                segments: fileTranscriptAssembly.segments
+            )
+        } catch {
+            resultsTask.cancel()
+            await analyzer.cancelAndFinishNow()
+            throw SpeechTranscriptionError.audioFileTranscriptionFailed(error.localizedDescription)
+        }
+    }
+
+    private func splitFirstTwoAudioChannels(from audioFile: AVAudioFile) throws -> SplitAudioChannels {
+        let sourceFormat = audioFile.processingFormat
+        guard sourceFormat.channelCount >= 2 else {
+            throw SpeechTranscriptionError.unsupportedAudioFormat
+        }
+
+        guard let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sourceFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw SpeechTranscriptionError.unsupportedAudioFormat
+        }
+
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GLSTT-AudioChannels-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        let person1URL = directoryURL.appendingPathComponent("Person-1.caf")
+        let person2URL = directoryURL.appendingPathComponent("Person-2.caf")
+        let person1File = try AVAudioFile(forWriting: person1URL, settings: monoFormat.settings)
+        let person2File = try AVAudioFile(forWriting: person2URL, settings: monoFormat.settings)
+
+        audioFile.framePosition = 0
+
+        let chunkFrameCount: AVAudioFrameCount = 16_384
+        while audioFile.framePosition < audioFile.length {
+            let remainingFrames = audioFile.length - audioFile.framePosition
+            let framesToRead = AVAudioFrameCount(min(Int64(chunkFrameCount), remainingFrames))
+            guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: framesToRead) else {
+                throw SpeechTranscriptionError.unsupportedAudioFormat
+            }
+
+            try audioFile.read(into: sourceBuffer, frameCount: framesToRead)
+            guard sourceBuffer.frameLength > 0 else { break }
+
+            guard
+                let sourceChannels = sourceBuffer.floatChannelData,
+                let person1Buffer = monoBuffer(format: monoFormat, frameLength: sourceBuffer.frameLength),
+                let person2Buffer = monoBuffer(format: monoFormat, frameLength: sourceBuffer.frameLength),
+                let person1Channel = person1Buffer.floatChannelData?[0],
+                let person2Channel = person2Buffer.floatChannelData?[0]
+            else {
+                throw SpeechTranscriptionError.unsupportedAudioFormat
+            }
+
+            let frameLength = Int(sourceBuffer.frameLength)
+            person1Channel.update(from: sourceChannels[0], count: frameLength)
+            person2Channel.update(from: sourceChannels[1], count: frameLength)
+            try person1File.write(from: person1Buffer)
+            try person2File.write(from: person2Buffer)
+        }
+
+        audioFile.framePosition = 0
+
+        return SplitAudioChannels(
+            directoryURL: directoryURL,
+            person1URL: person1URL,
+            person2URL: person2URL
+        )
+    }
+
+    private func monoBuffer(format: AVAudioFormat, frameLength: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
+            return nil
+        }
+
+        buffer.frameLength = frameLength
+        return buffer
+    }
+
+    private func emitFileTranscriptUpdate(_ text: String, to updateHandler: ((TranscriptAssembly) -> Void)?) {
+        var assembly = TranscriptAssembly()
+        assembly.apply(TranscriptUpdate(text: text, isFinal: true))
+        updateHandler?(assembly)
+    }
+
+    private static func speakerTranscript(person1: String, person2: String) -> String {
+        let trimmedPerson1 = person1.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPerson2 = person2.trimmingCharacters(in: .whitespacesAndNewlines)
+        var sections: [String] = []
+
+        if !trimmedPerson1.isEmpty {
+            sections.append("Person 1:\n\(trimmedPerson1)")
+        }
+
+        if !trimmedPerson2.isEmpty {
+            sections.append("Person 2:\n\(trimmedPerson2)")
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
     private func cleanup() {
         resultsTask?.cancel()
         resultsTask = nil
@@ -280,6 +570,46 @@ final class SpeechTranscriptionController {
                     self?.isRecording = false
                 }
             }
+        }
+    }
+
+    private func consumeFileResults(
+        from transcriber: DictationTranscriber,
+        updateHandler: ((TranscriptAssembly) -> Void)?
+    ) -> Task<(text: String, segments: [TimedTranscriptSegment]), Error> {
+        Task { @MainActor in
+            var fileTranscriptAssembly = TranscriptAssembly()
+            var timedSegments: [TimedTranscriptSegment] = []
+
+            for try await result in transcriber.results {
+                let update = TranscriptUpdate(
+                    text: String(result.text.characters),
+                    isFinal: result.isFinal
+                )
+                fileTranscriptAssembly.apply(update)
+                if result.isFinal {
+                    timedSegments.append(contentsOf: Self.timedSegments(from: result.text))
+                }
+                updateHandler?(fileTranscriptAssembly)
+            }
+
+            return (fileTranscriptAssembly.combinedText, timedSegments)
+        }
+    }
+
+    private static func timedSegments(from text: AttributedString) -> [TimedTranscriptSegment] {
+        text.runs.compactMap { run in
+            let segmentText = String(text[run.range].characters)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !segmentText.isEmpty else { return nil }
+
+            let timeRange = run.audioTimeRange
+            return TimedTranscriptSegment(
+                speaker: nil,
+                startTime: timeRange?.start.seconds,
+                endTime: timeRange.map { $0.start.seconds + $0.duration.seconds },
+                text: segmentText
+            )
         }
     }
 

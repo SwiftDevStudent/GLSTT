@@ -55,6 +55,8 @@ final class AppModel {
     private(set) var transcriptHistory: [TranscriptHistoryEntry] = []
     private(set) var importedVocabulary = ImportedVocabularySnapshot()
     private(set) var audioLevel: Double = 0
+    private(set) var audioFileTranscriptionJobs: [AudioFileTranscriptionJob] = []
+    private(set) var pendingAudioFileLanguageSelection: PendingAudioFileLanguageSelection?
     var launchAtLoginEnabled = false {
         didSet {
             guard !previewMode, !isSyncingLaunchAtLogin, launchAtLoginEnabled != oldValue else { return }
@@ -153,6 +155,8 @@ final class AppModel {
     private var insertionTarget: AccessibilityInsertionTarget?
     @ObservationIgnored
     private var liveInsertionSession: LiveInsertionSession?
+    @ObservationIgnored
+    private var audioFileTranscriptionTask: Task<Void, Never>?
     private let previewMode: Bool
     @ObservationIgnored
     private var isSyncingLaunchAtLogin = false
@@ -322,6 +326,14 @@ final class AppModel {
         speechController.isRecording
     }
 
+    var isAudioFileTranscriptionActive: Bool {
+        audioFileTranscriptionJobs.contains { $0.isActive }
+    }
+
+    var activeAudioFileTranscriptionJob: AudioFileTranscriptionJob? {
+        audioFileTranscriptionJobs.first { $0.isActive }
+    }
+
     var importedVocabularyWordCount: Int {
         importedVocabulary.totalWordCount
     }
@@ -343,7 +355,7 @@ final class AppModel {
         case .message(_, let isError):
             return isError ? "Attention Needed" : "GLSTT"
         case .hidden:
-            return "GLSTT"
+            return "Not Listening"
         }
     }
 
@@ -360,7 +372,7 @@ final class AppModel {
         case .message(let message, _):
             return message
         case .hidden:
-            return ""
+            return "Hold \(holdTriggerKey.shortTitle) to start dictation."
         }
     }
 
@@ -417,6 +429,17 @@ final class AppModel {
         case .message:
             return CGSize(width: 420, height: 126)
         case .recording, .finalizing:
+            return CGSize(width: 620, height: 220)
+        }
+    }
+
+    var hudStatusPanelSize: CGSize {
+        switch hudDisplayMode {
+        case .off:
+            return .zero
+        case .compact:
+            return CGSize(width: 92, height: 92)
+        case .transcript:
             return CGSize(width: 620, height: 220)
         }
     }
@@ -499,10 +522,18 @@ final class AppModel {
     }
 
     func copyLastTranscript() {
-        guard !lastTranscript.isEmpty else { return }
+        copyTranscript(lastTranscript)
+    }
+
+    func copyTranscript(_ entry: TranscriptHistoryEntry) {
+        copyTranscript(entry.text)
+    }
+
+    func copyTranscript(_ text: String) {
+        guard !text.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lastTranscript, forType: .string)
-        showMessage("Copied the last transcript.", isError: false)
+        NSPasteboard.general.setString(text, forType: .string)
+        showMessage("Copied transcript.", isError: false)
     }
 
     func showTranscriptWindow() {
@@ -523,9 +554,102 @@ final class AppModel {
         homeWindowController?.show()
     }
 
+    func handleIncomingAudioURL(_ url: URL) {
+        if let request = AudioFileTranscriptionRequestStore.request(from: url) {
+            showHomeWindow()
+            Task { @MainActor in
+                await requestAudioFileLanguageSelection(
+                    for: [PendingAudioFileLanguageSelection.File(url: request.fileURL, displayName: request.displayName)]
+                )
+            }
+            return
+        }
+
+        guard url.isFileURL else { return }
+        showHomeWindow()
+        enqueueAudioFiles([url])
+    }
+
+    func transcribeAudioFile(from url: URL) {
+        enqueueAudioFiles([url])
+    }
+
+    func enqueueAudioFiles(_ urls: [URL]) {
+        Task { @MainActor in
+            await requestAudioFileLanguageSelection(for: urls)
+        }
+    }
+
+    private func requestAudioFileLanguageSelection(for urls: [URL]) async {
+        await requestAudioFileLanguageSelection(
+            for: urls
+                .filter(\.isFileURL)
+                .map { PendingAudioFileLanguageSelection.File(url: $0, displayName: $0.lastPathComponent) }
+        )
+    }
+
+    func confirmPendingAudioFileLanguageSelection(languageID: String) {
+        guard let pendingAudioFileLanguageSelection else { return }
+        guard let language = pendingAudioFileLanguageSelection.languageOptions.first(where: { $0.id == languageID }) else {
+            showMessage("Choose a supported Apple speech language for that audio file.", isError: true, autoHide: false)
+            return
+        }
+
+        self.pendingAudioFileLanguageSelection = nil
+        for file in pendingAudioFileLanguageSelection.files {
+            enqueueAudioFile(at: file.url, displayName: file.displayName, language: language)
+        }
+    }
+
+    func cancelPendingAudioFileLanguageSelection() {
+        pendingAudioFileLanguageSelection = nil
+    }
+
+    private func requestAudioFileLanguageSelection(for files: [PendingAudioFileLanguageSelection.File]) async {
+        guard !speechController.isRecording else {
+            showMessage("Stop dictation before queueing audio files.", isError: true)
+            return
+        }
+
+        guard !files.isEmpty else { return }
+
+        let languageOptions = await AudioTranscriptionLanguageOption.supportedOptions()
+        guard let defaultLanguageID = AudioTranscriptionLanguageOption.defaultLanguageID(in: languageOptions) else {
+            showMessage("Apple did not report any supported file transcription languages on this device.", isError: true, autoHide: false)
+            return
+        }
+
+        let pendingFiles = (pendingAudioFileLanguageSelection?.files ?? []) + files
+        pendingAudioFileLanguageSelection = PendingAudioFileLanguageSelection(
+            files: pendingFiles,
+            languageOptions: languageOptions,
+            defaultLanguageID: defaultLanguageID
+        )
+        showHomeWindow()
+    }
+
+    func openTranscriptOutput(for job: AudioFileTranscriptionJob) {
+        guard let outputURL = job.outputURL else { return }
+        NSWorkspace.shared.open(outputURL)
+    }
+
+    private func enqueueAudioFile(
+        at url: URL,
+        displayName: String,
+        language: AudioTranscriptionLanguageOption
+    ) {
+        audioFileTranscriptionJobs.append(
+            AudioFileTranscriptionJob(sourceURL: url, displayName: displayName, language: language)
+        )
+        showHomeWindow()
+        startAudioFileQueueIfNeeded()
+    }
+
     private func beginRecording() async {
         hudDismissTask?.cancel()
         refreshPermissions()
+
+        guard !isAudioFileTranscriptionActive else { return }
 
         guard permissions.accessibilityTrusted else {
             requestAccessibilityAccess()
@@ -559,6 +683,91 @@ final class AppModel {
         }
     }
 
+    private func startAudioFileQueueIfNeeded() {
+        guard audioFileTranscriptionTask == nil else { return }
+
+        audioFileTranscriptionTask = Task { [weak self] in
+            await self?.processAudioFileQueue()
+        }
+    }
+
+    private func processAudioFileQueue() async {
+        defer {
+            audioFileTranscriptionTask = nil
+            if audioFileTranscriptionJobs.contains(where: { $0.status == .pending }) {
+                startAudioFileQueueIfNeeded()
+            }
+        }
+
+        while let jobIndex = audioFileTranscriptionJobs.firstIndex(where: { $0.status == .pending }) {
+            let job = audioFileTranscriptionJobs[jobIndex]
+            await runAudioFileTranscription(job)
+        }
+    }
+
+    private func runAudioFileTranscription(_ job: AudioFileTranscriptionJob) async {
+        updateAudioFileJob(job.id) { $0.status = .preparing }
+
+        let contextualStrings = contextualVocabularyEnabled
+            ? VocabularyImporter.mergedContextualStrings(
+                importedLists: importedVocabulary.lists,
+                runtimeWords: []
+            )
+            : []
+
+        do {
+            let result = try await speechController.transcribeAudioFile(
+                at: job.sourceURL,
+                locale: job.language?.locale,
+                contextualStrings: contextualStrings
+            ) { [weak self] assembly in
+                self?.updateAudioFileJob(job.id) {
+                    $0.status = .transcribing
+                    $0.preview = assembly.combinedText
+                }
+            }
+
+            let transcript = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !transcript.isEmpty else {
+                updateAudioFileJob(job.id) {
+                    $0.status = .failed("No speech was found in that file.")
+                }
+                return
+            }
+
+            let outputURL = try AudioTranscriptOutputStore.saveTranscript(
+                transcript,
+                audioFileName: job.displayName
+            )
+
+            finalizedTranscript = transcript
+            volatileTranscript = ""
+            lastTranscript = transcript
+            audioLevel = 0
+            recordTranscriptHistory(transcript)
+            updateAudioFileJob(job.id) {
+                $0.status = .finished
+                $0.preview = transcript
+                $0.transcript = transcript
+                $0.timedSegments = result.segments
+                $0.outputURL = outputURL
+            }
+        } catch {
+            audioLevel = 0
+            updateAudioFileJob(job.id) {
+                $0.status = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func updateAudioFileJob(
+        _ id: AudioFileTranscriptionJob.ID,
+        mutate: (inout AudioFileTranscriptionJob) -> Void
+    ) {
+        guard let index = audioFileTranscriptionJobs.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&audioFileTranscriptionJobs[index])
+    }
+
     private func finishRecording() async {
         guard speechController.isRecording else { return }
 
@@ -590,9 +799,15 @@ final class AppModel {
                 self.liveInsertionSession = nil
 
                 if finalizedLiveInsert {
+                    let verified = await inserter.verifyLiveInsertion(text: text, session: liveInsertionSession)
                     insertionTarget = nil
-                    if finalInsertionEnabled || liveInsertionEnabled {
-                        showMessage("Inserted transcript into the focused field.", isError: false)
+                    if verified {
+                        completeSuccessfulInsertion()
+                    } else {
+                        handleFailedInsertion(
+                            text: text,
+                            message: "GLSTT could not confirm the transcript appeared in the focused field."
+                        )
                     }
                     return
                 }
@@ -607,8 +822,14 @@ final class AppModel {
             let insertionResult = await inserter.insert(text: text, preferredTarget: insertionTarget)
             insertionTarget = nil
             switch insertionResult {
-            case .inserted(let strategy):
-                showMessage(successMessage(for: strategy), isError: false)
+            case .inserted(_, .confirmed):
+                completeSuccessfulInsertion()
+
+            case .inserted(_, .unverified):
+                handleFailedInsertion(
+                    text: text,
+                    message: "GLSTT could not confirm the transcript appeared in the focused field."
+                )
 
             case .noTarget:
                 handleFailedInsertion(
@@ -633,17 +854,10 @@ final class AppModel {
         }
     }
 
-    private func successMessage(for strategy: AccessibilityInsertionStrategy) -> String {
-        switch strategy {
-        case .selectedText:
-            return "Inserted transcript at the current insertion point."
-        case .valueAndRange:
-            return "Inserted transcript by editing the focused field value."
-        case .pasteFallback:
-            return "Inserted transcript using paste fallback."
-        case .noTarget:
-            return "No editable target was available."
-        }
+    private func completeSuccessfulInsertion() {
+        hudDismissTask?.cancel()
+        hudMode = .hidden
+        syncHUDVisibility()
     }
 
     func dismissHUD() {
@@ -710,12 +924,7 @@ final class AppModel {
             return
         }
 
-        switch hudMode {
-        case .hidden:
-            hudPanelController?.hide()
-        case .recording, .finalizing, .message:
-            hudPanelController?.show()
-        }
+        hudPanelController?.show()
     }
 
     private func markOnboardingDismissed() {

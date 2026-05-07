@@ -371,6 +371,7 @@ final class HotkeyMonitor {
     private var globalKeyUpMonitor: Any?
     private var localKeyUpMonitor: Any?
     private var pressedKeys = Set<TriggerKey>()
+    private var suppressedTriggerKeys = Set<TriggerKey>()
     private var holdDebounceTask: Task<Void, Never>?
     private var doubleTapTask: Task<Void, Never>?
 
@@ -412,6 +413,7 @@ final class HotkeyMonitor {
         holdDebounceTask = nil
         doubleTapTask = nil
         pressedKeys.removeAll()
+        suppressedTriggerKeys.removeAll()
 
         if let globalFlagsMonitor {
             NSEvent.removeMonitor(globalFlagsMonitor)
@@ -445,6 +447,7 @@ final class HotkeyMonitor {
         holdDebounceTask = nil
         doubleTapTask = nil
         pressedKeys.removeAll()
+        suppressedTriggerKeys.removeAll()
         machine.updateConfiguration(configuration.normalized)
     }
 
@@ -454,41 +457,54 @@ final class HotkeyMonitor {
             return
         }
 
-        applyStateEvent(for: key)
+        if pressedKeys.contains(key) {
+            handlePhysicalKeyReleased(key)
+        } else {
+            handlePhysicalKeyPressed(key)
+        }
     }
 
     private func handleKeyDown(_ event: NSEvent) {
         guard !event.isARepeat else { return }
 
         let key = TriggerKey.from(keyCode: event.keyCode)
-        if machine.configuration.holdKey == key || machine.configuration.toggleKey == key {
-            applyStateEvent(for: key, forcePressed: true)
-            return
-        }
-
-        apply(machine.handle(.otherKeyPressed))
+        handlePhysicalKeyPressed(key)
     }
 
     private func handleKeyUp(_ event: NSEvent) {
         let key = TriggerKey.from(keyCode: event.keyCode)
-        if machine.configuration.holdKey == key || machine.configuration.toggleKey == key {
-            applyStateEvent(for: key, forceReleased: true)
+        handlePhysicalKeyReleased(key)
+    }
+
+    private func handlePhysicalKeyPressed(_ key: TriggerKey) {
+        guard !pressedKeys.contains(key) else { return }
+
+        let isConfiguredTrigger = key == machine.configuration.holdKey || key == machine.configuration.toggleKey
+        let isPartOfExistingChord = !pressedKeys.isEmpty
+        pressedKeys.insert(key)
+
+        if isConfiguredTrigger {
+            guard !isPartOfExistingChord else {
+                suppressedTriggerKeys.insert(key)
+                return
+            }
+
+            apply(machine.handle(.keyPressed(key)))
+        } else {
+            apply(machine.handle(.otherKeyPressed))
         }
     }
 
-    private func applyStateEvent(for key: TriggerKey, forcePressed: Bool = false, forceReleased: Bool = false) {
-        let wasPressed = pressedKeys.contains(key)
-        let stateEvent: HotkeyStateMachineEvent
+    private func handlePhysicalKeyReleased(_ key: TriggerKey) {
+        guard pressedKeys.remove(key) != nil else { return }
 
-        if forceReleased || (!forcePressed && wasPressed) {
-            pressedKeys.remove(key)
-            stateEvent = .keyReleased(key)
-        } else {
-            pressedKeys.insert(key)
-            stateEvent = .keyPressed(key)
+        if suppressedTriggerKeys.remove(key) != nil {
+            return
         }
 
-        apply(machine.handle(stateEvent))
+        if key == machine.configuration.holdKey || key == machine.configuration.toggleKey {
+            apply(machine.handle(.keyReleased(key)))
+        }
     }
 
     private func apply(_ commands: [HotkeyStateMachineCommand]) {
@@ -496,10 +512,11 @@ final class HotkeyMonitor {
             switch command {
             case .scheduleHoldDebounce:
                 holdDebounceTask?.cancel()
+                let holdDebounce = self.holdDebounce
                 holdDebounceTask = Task { [weak self] in
                     try? await Task.sleep(for: holdDebounce)
                     guard !Task.isCancelled else { return }
-                    await self?.handleHoldDebounceElapsed()
+                    self?.handleHoldDebounceElapsed()
                 }
 
             case .cancelHoldDebounce:
@@ -508,10 +525,11 @@ final class HotkeyMonitor {
 
             case .scheduleDoubleTapWindow:
                 doubleTapTask?.cancel()
+                let doubleTapWindow = self.doubleTapWindow
                 doubleTapTask = Task { [weak self] in
                     try? await Task.sleep(for: doubleTapWindow)
                     guard !Task.isCancelled else { return }
-                    await self?.handleDoubleTapWindowElapsed()
+                    self?.handleDoubleTapWindowElapsed()
                 }
 
             case .cancelDoubleTapWindow:

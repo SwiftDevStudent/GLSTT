@@ -40,6 +40,9 @@ struct GLSTTApp: App {
         WindowGroup {
             PhoneHomeView()
                 .environment(appModel)
+                .onOpenURL { url in
+                    appModel.handleIncomingAudioURL(url)
+                }
         }
         #endif
     }
