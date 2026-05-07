@@ -19,6 +19,8 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             permissionSection
+            MacAudioRecorderView(compact: true)
+                .environment(appModel)
             audioFileSection
             transcriptSection
             softwareUpdateSection
@@ -75,7 +77,7 @@ struct ContentView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .disabled(appModel.isRecordingActive)
+                .disabled(appModel.isBusyWithAudioWork)
             }
 
             if appModel.audioFileTranscriptionJobs.isEmpty {
@@ -215,7 +217,7 @@ struct ContentView: View {
                     appModel.copyLastTranscript()
                 }
 
-                Button("Show Transcript Window") {
+                Button("Open Main Window") {
                     appModel.showTranscriptWindow()
                 }
             }

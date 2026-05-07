@@ -53,9 +53,11 @@
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>GLSTT captures microphone audio locally for push-to-talk transcription.</string>
+	<string>GLSTT records microphone audio locally for dictation and saved audio recordings.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>GLSTT uses Apple's Speech framework to transcribe speech from the microphone and audio files.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

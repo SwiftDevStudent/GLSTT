@@ -19,20 +19,12 @@ struct PhoneComposerSection: View {
 private struct PhoneComposerCard: View {
     @Environment(PhoneAppModel.self) private var appModel
     @FocusState private var isEditorFocused: Bool
-    @State private var showingAudioImporter = false
-    @State private var previewedTranscriptURL: URL?
     @State private var draftCopied = false
+    @State private var localDraftText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             headerRow
-
-            if !appModel.audioFileTranscriptionJobs.isEmpty {
-                PhoneAudioFileTranscriptionQueueView(
-                    jobs: appModel.audioFileTranscriptionJobs,
-                    openOutput: { previewedTranscriptURL = $0 }
-                )
-            }
 
             if hasActiveBiasPacks {
                 Text("Biasing: \(appModel.selectedBiasSummary)")
@@ -41,7 +33,7 @@ private struct PhoneComposerCard: View {
                     .lineLimit(2)
             }
 
-            TextEditor(text: draftBinding)
+            TextEditor(text: $localDraftText)
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 180)
@@ -55,6 +47,11 @@ private struct PhoneComposerCard: View {
                                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                         }
                 )
+                .onChange(of: localDraftText) { _, newValue in
+                    if appModel.draftText != newValue {
+                        appModel.draftText = newValue
+                    }
+                }
 
             if hasDraftText {
                 draftActions
@@ -65,27 +62,14 @@ private struct PhoneComposerCard: View {
                 .environment(\.phoneEditorFocusBinding, $isEditorFocused)
         }
         .padding(.vertical, 8)
-        .fileImporter(
-            isPresented: $showingAudioImporter,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: true
-        ) { result in
-            if case .success(let urls) = result {
-                appModel.enqueueAudioFiles(urls)
+        .onAppear {
+            localDraftText = appModel.draftText
+        }
+        .onChange(of: appModel.draftText) { _, newValue in
+            if localDraftText != newValue {
+                localDraftText = newValue
             }
         }
-        .dropDestination(for: URL.self) { urls, _ in
-            appModel.enqueueAudioFiles(urls)
-            return true
-        }
-        .sheet(item: languageSelectionBinding) { selection in
-            PhoneAudioFileLanguageSelectionSheet(
-                selection: selection,
-                confirm: appModel.confirmPendingAudioFileLanguageSelection(languageID:),
-                cancel: appModel.cancelPendingAudioFileLanguageSelection
-            )
-        }
-        .quickLookPreview($previewedTranscriptURL)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -96,26 +80,8 @@ private struct PhoneComposerCard: View {
         }
     }
 
-    private var languageSelectionBinding: Binding<PendingAudioFileLanguageSelection?> {
-        Binding(
-            get: { appModel.pendingAudioFileLanguageSelection },
-            set: { selection in
-                if selection == nil {
-                    appModel.cancelPendingAudioFileLanguageSelection()
-                }
-            }
-        )
-    }
-
-    private var draftBinding: Binding<String> {
-        Binding(
-            get: { appModel.draftText },
-            set: { appModel.draftText = $0 }
-        )
-    }
-
     private var hasDraftText: Bool {
-        !appModel.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !localDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var hasActiveBiasPacks: Bool {
@@ -144,6 +110,7 @@ private struct PhoneComposerCard: View {
     private var clearButton: some View {
         Button(role: .destructive) {
             appModel.clearDraft()
+            localDraftText = ""
         } label: {
             Label("Clear", systemImage: "xmark.circle")
         }
@@ -164,25 +131,10 @@ private struct PhoneComposerCard: View {
 
     private var headerRow: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text("Quick Dictation")
+            Text("Dictation")
                 .font(.title2.weight(.bold))
 
             Spacer()
-
-            Button {
-                showingAudioImporter = true
-            } label: {
-                VStack(spacing: 5) {
-                    Image(systemName: "waveform.badge.plus")
-                        .font(.headline.weight(.semibold))
-                    Text("Audio")
-                        .font(.caption2.weight(.semibold))
-                }
-                .frame(width: 58, height: 58)
-            }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.roundedRectangle(radius: 16))
-            .disabled(appModel.isRecording)
 
             Menu {
                 Button("No Pack") {
@@ -218,7 +170,7 @@ private struct PhoneComposerCard: View {
     }
 
     private func copyDraft() {
-        appModel.copyTranscript(appModel.draftText)
+        appModel.copyTranscript(localDraftText)
 
         withAnimation(.snappy(duration: 0.18)) {
             draftCopied = true
@@ -230,6 +182,129 @@ private struct PhoneComposerCard: View {
                 draftCopied = false
             }
         }
+    }
+}
+
+struct PhoneAudioRecorderSection: View {
+    @Environment(PhoneAppModel.self) private var appModel
+    @State private var showingAudioImporter = false
+    @State private var previewedTranscriptURL: URL?
+
+    var body: some View {
+        Group {
+            Section("Saved Recordings") {
+                Button {
+                    showingAudioImporter = true
+                } label: {
+                    Label("Import audio file", systemImage: "waveform.badge.plus")
+                }
+                .disabled(appModel.isFileRecording || appModel.isAudioFileTranscriptionActive)
+
+                if appModel.savedAudioRecordings.isEmpty {
+                    Text("Tap the record button at the bottom. Audio files are saved in Files under GLSTT Recordings.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(appModel.savedAudioRecordings) { recording in
+                        PhoneSavedRecordingRow(recording: recording)
+                            .environment(appModel)
+                    }
+                }
+            }
+
+            if !appModel.audioFileTranscriptionJobs.isEmpty {
+                Section("Transcription") {
+                    PhoneAudioFileTranscriptionQueueView(
+                        jobs: appModel.audioFileTranscriptionJobs,
+                        openOutput: { previewedTranscriptURL = $0 }
+                    )
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showingAudioImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                appModel.enqueueAudioFiles(urls)
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            appModel.enqueueAudioFiles(urls)
+            return true
+        }
+        .sheet(item: languageSelectionBinding) { selection in
+            PhoneAudioFileLanguageSelectionSheet(
+                selection: selection,
+                confirm: appModel.confirmPendingAudioFileLanguageSelection(languageID:),
+                cancel: appModel.cancelPendingAudioFileLanguageSelection
+            )
+        }
+        .quickLookPreview($previewedTranscriptURL)
+    }
+
+    private var languageSelectionBinding: Binding<PendingAudioFileLanguageSelection?> {
+        Binding(
+            get: { appModel.pendingAudioFileLanguageSelection },
+            set: { selection in
+                if selection == nil {
+                    appModel.cancelPendingAudioFileLanguageSelection()
+                }
+            }
+        )
+    }
+}
+
+private struct PhoneSavedRecordingRow: View {
+    @Environment(PhoneAppModel.self) private var appModel
+    let recording: PhoneSavedAudioRecording
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "waveform.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(recording.displayName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text("\(recording.durationLabel) - \(recording.detailLabel)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button {
+                appModel.transcribeSavedRecording(recording)
+            } label: {
+                Image(systemName: "text.bubble")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Transcribe recording")
+
+            if let url = appModel.urlForSavedRecording(recording) {
+                ShareLink(item: url) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Share recording")
+            }
+
+            Button(role: .destructive) {
+                appModel.deleteSavedRecording(recording)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Delete recording")
+        }
+        .padding(.vertical, 6)
     }
 }
 
@@ -248,7 +323,7 @@ private struct PhoneAudioFileTranscriptionQueueView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !activeJobs.isEmpty {
-                PhoneAudioFileTranscriptionJobSection(title: "File Transcription") {
+                PhoneAudioFileTranscriptionJobSection(title: "In Progress") {
                     ForEach(activeJobs) { job in
                         PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
                     }
@@ -256,7 +331,7 @@ private struct PhoneAudioFileTranscriptionQueueView: View {
             }
 
             if !completedJobs.isEmpty {
-                PhoneAudioFileTranscriptionJobSection(title: "Completed Outputs") {
+                PhoneAudioFileTranscriptionJobSection(title: "Finished") {
                     ForEach(completedJobs) { job in
                         PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
                     }
@@ -341,12 +416,8 @@ private struct PhoneAudioFileTranscriptionJobRow: View {
                 }
             }
         }
-        .padding(12)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
-        )
         .accessibilityElement(children: .combine)
     }
 
@@ -490,9 +561,9 @@ private struct PhoneDictationControls: View {
             .accessibilityLabel(appModel.isRecording ? "Stop dictation" : "Start dictation")
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(appModel.isRecording ? "Listening" : "Tap to start recording")
+                Text(appModel.isRecording ? "Listening" : "Start dictation")
                     .font(.headline)
-                Text(appModel.isRecording ? "Tap to stop" : appModel.permissionSummary)
+                Text(appModel.isRecording ? "Tap to stop dictation" : appModel.permissionSummary)
                     .font(.footnote)
                     .foregroundStyle(appModel.isRecording ? .orange : .secondary)
                 if appModel.importedVocabularyWordCount > 0 {

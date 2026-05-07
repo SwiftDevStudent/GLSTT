@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import ApplicationServices
+import AVFAudio
 import CoreGraphics
 import Observation
 import SwiftUI
@@ -20,6 +21,7 @@ final class AppModel {
     private static let importedVocabularyListsKey = "glstt.settings.importedVocabularyLists"
     private static let copyFailedInsertionsKey = "glstt.settings.copyFailedInsertions"
     private static let showTranscriptWindowOnFailureKey = "glstt.settings.showTranscriptWindowOnFailure"
+    private static let savedAudioRecordingsKey = "glstt.macos.savedAudioRecordings"
     private static let transcriptDatabaseName = "mac-transcripts.sqlite"
 
     enum HUDMode: Equatable {
@@ -58,6 +60,9 @@ final class AppModel {
     private(set) var audioLevel: Double = 0
     private(set) var audioFileTranscriptionJobs: [AudioFileTranscriptionJob] = []
     private(set) var pendingAudioFileLanguageSelection: PendingAudioFileLanguageSelection?
+    private(set) var savedAudioRecordings: [SavedAudioRecording] = []
+    private(set) var isFileRecording = false
+    private(set) var fileRecordingElapsedSeconds: TimeInterval = 0
     var launchAtLoginEnabled = false {
         didSet {
             guard !previewMode, !isSyncingLaunchAtLogin, launchAtLoginEnabled != oldValue else { return }
@@ -141,6 +146,8 @@ final class AppModel {
     @ObservationIgnored
     private let defaults: UserDefaults
     @ObservationIgnored
+    private let fileManager = FileManager.default
+    @ObservationIgnored
     private let vocabularyStore: ImportedVocabularyStore
     @ObservationIgnored
     private let transcriptStore: TranscriptHistoryStore
@@ -148,9 +155,6 @@ final class AppModel {
     private var hudPanelController: HUDPanelController?
     @ObservationIgnored
     private var onboardingWindowController: OnboardingWindowController?
-    @ObservationIgnored
-    private var transcriptWindowController: TranscriptWindowController?
-    @ObservationIgnored
     private var homeWindowController: HomeWindowController?
     @ObservationIgnored
     private var hudDismissTask: Task<Void, Never>?
@@ -160,6 +164,12 @@ final class AppModel {
     private var liveInsertionSession: LiveInsertionSession?
     @ObservationIgnored
     private var audioFileTranscriptionTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var audioRecorder: AVAudioRecorder?
+    @ObservationIgnored
+    private var fileRecordingStartedAt: Date?
+    @ObservationIgnored
+    private var fileRecordingTimerTask: Task<Void, Never>?
     private let previewMode: Bool
     @ObservationIgnored
     private var isSyncingLaunchAtLogin = false
@@ -179,7 +189,6 @@ final class AppModel {
         self.transcriptStore = TranscriptHistoryStore(filename: Self.transcriptDatabaseName)
         self.hudPanelController = nil
         self.onboardingWindowController = nil
-        self.transcriptWindowController = nil
         self.homeWindowController = nil
         let loginItemState = loginItemController.state
         self.launchAtLoginEnabled = previewMode
@@ -209,8 +218,9 @@ final class AppModel {
         self.importedVocabulary = previewMode ? ImportedVocabularySnapshot() : vocabularyStore.load()
         self.transcriptHistory = previewMode ? [] : transcriptStore.loadEntries()
         self.lastTranscript = transcriptHistory.first?.text ?? ""
+        self.savedAudioRecordings = previewMode ? [] : loadSavedAudioRecordings()
         self.copyFailedInsertionsToClipboard = previewMode ? true : defaults.object(forKey: Self.copyFailedInsertionsKey) as? Bool ?? true
-        self.showTranscriptWindowOnFailure = previewMode ? true : defaults.object(forKey: Self.showTranscriptWindowOnFailureKey) as? Bool ?? true
+        self.showTranscriptWindowOnFailure = previewMode ? false : defaults.object(forKey: Self.showTranscriptWindowOnFailureKey) as? Bool ?? false
 
         speechController.onTranscriptUpdate = { [weak self] transcript in
             guard let self else { return }
@@ -282,6 +292,9 @@ final class AppModel {
     var statusSummary: String {
         switch hudMode {
         case .hidden:
+            if isFileRecording {
+                return "Recording"
+            }
             if speechController.isRecording {
                 return "Listening"
             }
@@ -330,6 +343,10 @@ final class AppModel {
 
     var isRecordingActive: Bool {
         speechController.isRecording
+    }
+
+    var isBusyWithAudioWork: Bool {
+        speechController.isRecording || isFileRecording || isAudioFileTranscriptionActive
     }
 
     var isAudioFileTranscriptionActive: Bool {
@@ -544,12 +561,7 @@ final class AppModel {
 
     func showTranscriptWindow() {
         guard !lastTranscript.isEmpty else { return }
-
-        if transcriptWindowController == nil {
-            transcriptWindowController = TranscriptWindowController(model: self)
-        }
-
-        transcriptWindowController?.show()
+        showHomeWindow()
     }
 
     func showHomeWindow() {
@@ -574,6 +586,56 @@ final class AppModel {
         guard url.isFileURL else { return }
         showHomeWindow()
         enqueueAudioFiles([url])
+    }
+
+    func toggleFileRecording() {
+        Task {
+            if isFileRecording {
+                await stopFileRecording()
+            } else {
+                await startFileRecording()
+            }
+        }
+    }
+
+    func transcribeSavedRecording(_ recording: SavedAudioRecording) {
+        guard let url = urlForSavedRecording(recording) else {
+            showMessage("Recording file is missing.", isError: true)
+            savedAudioRecordings.removeAll { $0.id == recording.id }
+            persistSavedAudioRecordings()
+            return
+        }
+
+        enqueueAudioFiles([url])
+    }
+
+    func deleteSavedRecording(_ recording: SavedAudioRecording) {
+        guard !isFileRecording else {
+            showMessage("Stop recording before deleting saved files.", isError: true)
+            return
+        }
+
+        if let url = urlForSavedRecording(recording) {
+            try? fileManager.removeItem(at: url)
+        }
+        savedAudioRecordings.removeAll { $0.id == recording.id }
+        persistSavedAudioRecordings()
+    }
+
+    func revealSavedRecording(_ recording: SavedAudioRecording) {
+        guard let url = urlForSavedRecording(recording) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func openSavedRecordingsFolder() {
+        if let directory = try? recordingsDirectory() {
+            NSWorkspace.shared.open(directory)
+        }
+    }
+
+    func urlForSavedRecording(_ recording: SavedAudioRecording) -> URL? {
+        let url = recordingURL(fileName: recording.fileName)
+        return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
     func transcribeAudioFile(from url: URL) {
@@ -655,6 +717,7 @@ final class AppModel {
         hudDismissTask?.cancel()
         refreshPermissions()
 
+        guard !isFileRecording else { return }
         guard !isAudioFileTranscriptionActive else { return }
 
         guard permissions.accessibilityTrusted else {
@@ -687,6 +750,167 @@ final class AppModel {
             insertionTarget = nil
             showMessage(error.localizedDescription, isError: true)
         }
+    }
+
+    private func startFileRecording() async {
+        hudDismissTask?.cancel()
+        refreshPermissions()
+
+        guard !speechController.isRecording else {
+            showMessage("Stop dictation first.", isError: true)
+            return
+        }
+
+        guard !isAudioFileTranscriptionActive else {
+            showMessage("Finish the current transcription first.", isError: true)
+            return
+        }
+
+        guard await speechController.requestMicrophoneAccess() else {
+            refreshPermissions()
+            showMessage("Microphone access is needed.", isError: true)
+            return
+        }
+
+        do {
+            let url = try nextRecordingURL()
+            let recorder = try AVAudioRecorder(url: url, settings: [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+            ])
+            recorder.isMeteringEnabled = true
+            recorder.prepareToRecord()
+
+            guard recorder.record() else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+
+            audioRecorder = recorder
+            fileRecordingStartedAt = Date()
+            fileRecordingElapsedSeconds = 0
+            audioLevel = 0
+            isFileRecording = true
+            startFileRecordingTimer()
+            refreshPermissions()
+        } catch {
+            audioRecorder = nil
+            fileRecordingStartedAt = nil
+            fileRecordingElapsedSeconds = 0
+            audioLevel = 0
+            isFileRecording = false
+            showMessage(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func stopFileRecording() async {
+        guard isFileRecording, let recorder = audioRecorder else { return }
+
+        let url = recorder.url
+        let startedAt = fileRecordingStartedAt ?? Date()
+        recorder.stop()
+        stopFileRecordingTimer()
+
+        audioRecorder = nil
+        fileRecordingStartedAt = nil
+        isFileRecording = false
+        audioLevel = 0
+        fileRecordingElapsedSeconds = 0
+
+        let recording = SavedAudioRecording(
+            id: UUID(),
+            fileName: url.lastPathComponent,
+            createdAt: startedAt,
+            durationSeconds: max(Date().timeIntervalSince(startedAt), 0),
+            fileSize: savedRecordingFileSize(for: url)
+        )
+        savedAudioRecordings.insert(recording, at: 0)
+        persistSavedAudioRecordings()
+        showHomeWindow()
+    }
+
+    private func startFileRecordingTimer() {
+        fileRecordingTimerTask?.cancel()
+        fileRecordingTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                await MainActor.run {
+                    guard let self, self.isFileRecording, let startedAt = self.fileRecordingStartedAt else { return }
+                    self.fileRecordingElapsedSeconds = Date().timeIntervalSince(startedAt)
+                    self.audioRecorder?.updateMeters()
+                    if let recorder = self.audioRecorder {
+                        self.audioLevel = Self.normalizedAudioLevel(fromAveragePower: recorder.averagePower(forChannel: 0))
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopFileRecordingTimer() {
+        fileRecordingTimerTask?.cancel()
+        fileRecordingTimerTask = nil
+    }
+
+    private static func normalizedAudioLevel(fromAveragePower power: Float) -> Double {
+        guard power.isFinite else { return 0 }
+        let normalized = pow(10, Double(power) / 35.0)
+        return min(max(normalized * 1.8, 0), 1)
+    }
+
+    private func nextRecordingURL() throws -> URL {
+        let directory = try recordingsDirectory()
+        let stamp = Self.recordingFileStamp(from: Date())
+        var candidate = directory.appendingPathComponent("GLSTT Recording \(stamp).m4a")
+        var suffix = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("GLSTT Recording \(stamp) \(suffix).m4a")
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private static func recordingFileStamp(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withDashSeparatorInDate]
+        return formatter.string(from: date)
+            .replacingOccurrences(of: ":", with: "-")
+    }
+
+    private func recordingsDirectory() throws -> URL {
+        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
+        let directory = documentsDirectory.appendingPathComponent("GLSTT Recordings", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func recordingURL(fileName: String) -> URL {
+        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
+        return documentsDirectory
+            .appendingPathComponent("GLSTT Recordings", isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
+    private func savedRecordingFileSize(for url: URL) -> Int64? {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize.map(Int64.init)
+    }
+
+    private func loadSavedAudioRecordings() -> [SavedAudioRecording] {
+        guard let data = defaults.data(forKey: Self.savedAudioRecordingsKey),
+              let decoded = try? JSONDecoder().decode([SavedAudioRecording].self, from: data)
+        else {
+            return []
+        }
+
+        return decoded.filter { urlForSavedRecording($0) != nil }
+    }
+
+    private func persistSavedAudioRecordings() {
+        guard let data = try? JSONEncoder().encode(savedAudioRecordings) else { return }
+        defaults.set(data, forKey: Self.savedAudioRecordingsKey)
     }
 
     private func startAudioFileQueueIfNeeded() {
@@ -872,6 +1096,11 @@ final class AppModel {
         syncHUDVisibility()
     }
 
+    func openTranscriptWindowFromHUD() {
+        showHomeWindow()
+        dismissHUD()
+    }
+
     private func applyLiveInsertionUpdate(_ transcript: TranscriptAssembly) async {
         guard liveInsertionEnabled else { return }
         if var liveInsertionSession {
@@ -898,17 +1127,34 @@ final class AppModel {
         }
 
         if showTranscriptWindowOnFailure {
-            if transcriptWindowController == nil {
-                transcriptWindowController = TranscriptWindowController(model: self)
-            }
-            transcriptWindowController?.show()
+            showHomeWindow()
         }
 
-        let suffix = copyFailedInsertionsToClipboard ? " Copied to the clipboard." : ""
-        showMessage(message + suffix, isError: true)
+        showMessage(shortInsertionMessage(for: message), isError: true, autoHideDelay: .milliseconds(1600))
     }
 
-    private func showMessage(_ message: String, isError: Bool, autoHide: Bool = true) {
+    private func shortInsertionMessage(for message: String) -> String {
+        if copyFailedInsertionsToClipboard {
+            return "Clipboard ready"
+        }
+
+        let lowercased = message.lowercased()
+        if lowercased.contains("could not confirm") {
+            return "Check field"
+        }
+        if lowercased.contains("accessibility") {
+            return "Needs access"
+        }
+        if lowercased.contains("no editable target") || lowercased.contains("no target") {
+            return "No field"
+        }
+        if lowercased.contains("no speech") {
+            return "No speech"
+        }
+        return "Not inserted"
+    }
+
+    private func showMessage(_ message: String, isError: Bool, autoHide: Bool = true, autoHideDelay: Duration = .seconds(2.8)) {
         hudMode = .message(message, isError: isError)
         syncHUDVisibility()
 
@@ -916,7 +1162,7 @@ final class AppModel {
 
         hudDismissTask?.cancel()
         hudDismissTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.8))
+            try? await Task.sleep(for: autoHideDelay)
             guard !Task.isCancelled else { return }
             self?.hudMode = .hidden
             self?.syncHUDVisibility()

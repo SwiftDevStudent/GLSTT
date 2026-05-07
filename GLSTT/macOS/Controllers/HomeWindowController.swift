@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 final class HomeWindowController: NSWindowController {
     init(model: AppModel) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 660, height: 660),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -44,6 +44,8 @@ private struct HomeWindowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             header
+            MacAudioRecorderView(compact: false)
+                .environment(appModel)
             if !appModel.audioFileTranscriptionJobs.isEmpty {
                 audioFileSection
             }
@@ -93,7 +95,7 @@ private struct HomeWindowView: View {
                     Text("GLSTT")
                         .font(.system(.largeTitle, design: .rounded, weight: .bold))
 
-                    HomeBadge(title: appModel.isRecordingActive ? "Listening" : "Ready", tint: appModel.isRecordingActive ? .green : .secondary)
+                    HomeBadge(title: appModel.isFileRecording ? "Recording" : appModel.isRecordingActive ? "Listening" : "Ready", tint: appModel.isBusyWithAudioWork ? .green : .secondary)
                 }
 
                 Text(appModel.triggerSummary)
@@ -106,7 +108,7 @@ private struct HomeWindowView: View {
             AudioImportSquareButton(isTargeted: isAudioDropTargeted) {
                 showingAudioImporter = true
             }
-            .disabled(appModel.isRecordingActive)
+            .disabled(appModel.isBusyWithAudioWork)
             .dropDestination(for: URL.self) { urls, _ in
                 appModel.enqueueAudioFiles(urls)
                 return true

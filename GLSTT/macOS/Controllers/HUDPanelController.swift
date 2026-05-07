@@ -17,7 +17,7 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
     init(model: AppModel) {
         self.model = model
         statusPanel = Self.makePanel(size: model.hudStatusPanelSize)
-        messagePanel = Self.makePanel(size: CGSize(width: 420, height: 76))
+        messagePanel = Self.makePanel(size: Self.messagePanelSize)
 
         super.init()
 
@@ -122,7 +122,7 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
             return
         }
 
-        let desiredSize = CGSize(width: 420, height: 76)
+        let desiredSize = Self.messagePanelSize
         let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(statusPanel.frame) }) ?? NSScreen.main
         guard let screen else { return }
 
@@ -181,6 +181,10 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         displayMode == .compact
             ? (Self.compactOriginXKey, Self.compactOriginYKey)
             : (Self.statusOriginXKey, Self.statusOriginYKey)
+    }
+
+    private static var messagePanelSize: CGSize {
+        CGSize(width: 224, height: 54)
     }
 
     private func clamp(_ origin: CGPoint, size: CGSize, screen: NSScreen) -> CGPoint {
@@ -353,9 +357,9 @@ private struct HUDMessageView: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: iconName)
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
+                .frame(width: 21, height: 21)
                 .background(
                     Circle()
                         .fill(tint.opacity(0.16))
@@ -364,33 +368,26 @@ private struct HUDMessageView: View {
             Text(message)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
-                .lineLimit(2)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if model.canDismissHUD {
-                Button {
-                    model.dismissHUD()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            Capsule(style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    Capsule(style: .continuous)
                         .strokeBorder(tint.opacity(0.45), lineWidth: 1)
                 }
         )
-        .padding(6)
+        .padding(5)
+        .contentShape(Capsule(style: .continuous))
+        .onTapGesture {
+            model.openTranscriptWindowFromHUD()
+        }
     }
 
     private var message: String {

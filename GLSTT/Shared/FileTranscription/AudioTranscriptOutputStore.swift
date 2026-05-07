@@ -19,11 +19,10 @@ enum AudioTranscriptOutputStore {
     }
 
     private static func outputDirectory() throws -> URL {
-        let supportDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let directory = supportDirectory
-            .appendingPathComponent("GLSTT", isDirectory: true)
-            .appendingPathComponent("Audio Transcripts", isDirectory: true)
+        let directory = documentsDirectory
+            .appendingPathComponent("GLSTT Audio Transcripts", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }

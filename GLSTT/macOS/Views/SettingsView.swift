@@ -51,13 +51,13 @@ struct SettingsView: View {
                         Toggle("Require a double-press for the toggle key", isOn: $appModel.toggleTriggerRequiresDoublePress)
                             .toggleStyle(.switch)
 
-                        if appModel.isRecordingActive {
+                        if appModel.isBusyWithAudioWork {
                             Text("Stop dictation before changing hotkeys.")
                                 .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .disabled(appModel.isRecordingActive)
+                    .disabled(appModel.isBusyWithAudioWork)
                 }
 
                 SettingsCard("Insertion") {
@@ -65,8 +65,8 @@ struct SettingsView: View {
                         Toggle("Insert live transcript while listening", isOn: $appModel.liveInsertionEnabled)
                         Toggle("Insert final transcript when dictation stops", isOn: $appModel.finalInsertionEnabled)
                         Toggle("Bias recognition with focused-field terms", isOn: $appModel.contextualVocabularyEnabled)
-                        Toggle("Copy transcript when insertion fails", isOn: $appModel.copyFailedInsertionsToClipboard)
-                        Toggle("Show transcript window when insertion fails", isOn: $appModel.showTranscriptWindowOnFailure)
+                        Toggle("Copy to clipboard if insertion is uncertain", isOn: $appModel.copyFailedInsertionsToClipboard)
+                        Toggle("Open main window on failed insertion", isOn: $appModel.showTranscriptWindowOnFailure)
                     }
                 }
 
@@ -170,7 +170,7 @@ struct SettingsView: View {
                             appModel.showPermissionsWindow()
                         }
 
-                        Button("Transcript Window") {
+                        Button("Main Window") {
                             appModel.showTranscriptWindow()
                         }
                         .disabled(appModel.lastTranscript.isEmpty)
@@ -231,7 +231,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    StatusBadge(title: appModel.statusSummary, tint: appModel.isRecordingActive ? .green : .secondary)
+                    StatusBadge(title: appModel.statusSummary, tint: appModel.isBusyWithAudioWork ? .green : .secondary)
                     StatusBadge(title: appModel.hudDisplayMode.title, tint: .blue)
                     StatusBadge(title: appModel.launchAtLoginBadgeTitle, tint: appModel.launchAtLoginEnabled ? .green : .secondary)
                 }

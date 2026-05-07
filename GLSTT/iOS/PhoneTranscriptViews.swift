@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PhoneTranscriptHistorySection: View {
     @Environment(PhoneAppModel.self) private var appModel
+    @State private var expandedEntryIDs = Set<TranscriptHistoryEntry.ID>()
 
     var body: some View {
         Section("Recent Transcripts") {
@@ -15,58 +16,94 @@ struct PhoneTranscriptHistorySection: View {
                 .frame(maxWidth: .infinity, minHeight: 180)
                 .listRowBackground(Color.clear)
             } else {
-                if let latestEntry = appModel.transcriptHistory.first {
-                    PhoneLatestTranscriptCard(entry: latestEntry) {
-                        appModel.copyTranscript(latestEntry.text)
-                    }
-                }
-
-                ForEach(appModel.transcriptHistory.dropFirst()) { entry in
-                    NavigationLink(value: entry) {
-                        PhoneTranscriptRow(entry: entry)
-                    }
+                ForEach(appModel.transcriptHistory) { entry in
+                    PhoneTranscriptCard(
+                        entry: entry,
+                        isExpanded: expandedEntryIDs.contains(entry.id),
+                        copy: {
+                            appModel.copyTranscript(entry.text)
+                        },
+                        toggle: {
+                            toggle(entry)
+                        }
+                    )
                 }
             }
+        }
+    }
+
+    private func toggle(_ entry: TranscriptHistoryEntry) {
+        if expandedEntryIDs.contains(entry.id) {
+            expandedEntryIDs.remove(entry.id)
+        } else {
+            expandedEntryIDs.insert(entry.id)
         }
     }
 }
 
-private struct PhoneLatestTranscriptCard: View {
+private struct PhoneTranscriptCard: View {
     let entry: TranscriptHistoryEntry
+    let isExpanded: Bool
     let copy: () -> Void
+    let toggle: () -> Void
 
     @State private var copied = false
+    private let collapsedLineLimit = 7
+    private let expansionCharacterThreshold = 420
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center) {
-                Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button(action: copyWithFeedback) {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(copied ? .green : .accentColor)
-                        .contentTransition(.opacity)
-                }
-                .buttonStyle(.borderless)
-            }
-
             Text(entry.text)
                 .font(.body)
                 .textSelection(.enabled)
-                .lineLimit(8)
+                .lineLimit(isExpanded ? nil : collapsedLineLimit)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            footer
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Button(action: copyWithFeedback) {
+                if copied {
+                    Label("Copied", systemImage: "checkmark.circle.fill")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.green)
+                } else {
+                    Image(systemName: "doc.on.doc")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.borderless)
+            .contentTransition(.opacity)
+
+            Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            if canExpand {
+                Button(action: toggle) {
+                    Image(systemName: isExpanded ? "chevron.up.circle" : "chevron.down.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isExpanded ? "Collapse transcript" : "Expand transcript")
+            }
+        }
+    }
+
+    private var canExpand: Bool {
+        entry.text.count > expansionCharacterThreshold || entry.text.filter(\.isNewline).count >= collapsedLineLimit
     }
 
     private func copyWithFeedback() {
         copy()
-
         withAnimation(.snappy(duration: 0.18)) {
             copied = true
         }
@@ -77,28 +114,6 @@ private struct PhoneLatestTranscriptCard: View {
                 copied = false
             }
         }
-    }
-}
-
-private struct PhoneTranscriptRow: View {
-    let entry: TranscriptHistoryEntry
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(entry.title)
-                .font(.headline)
-                .lineLimit(1)
-
-            Text(entry.preview)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-
-            Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 4)
     }
 }
 

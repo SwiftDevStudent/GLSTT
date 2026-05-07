@@ -1,4 +1,5 @@
 #if os(iOS)
+import AVFAudio
 import Foundation
 import Observation
 #if canImport(UIKit)
@@ -10,6 +11,7 @@ import UIKit
 final class PhoneAppModel {
     private static let livePreviewKey = "glstt.ios.livePreview"
     private static let importedVocabularyListsKey = "glstt.ios.importedVocabularyLists"
+    private static let savedAudioRecordingsKey = "glstt.ios.savedAudioRecordings"
     private static let transcriptDatabaseName = "phone-transcripts.sqlite"
 
     private(set) var permissions = AppPermissionsState.current()
@@ -21,6 +23,9 @@ final class PhoneAppModel {
     private(set) var audioLevel: Double = 0
     private(set) var audioFileTranscriptionJobs: [AudioFileTranscriptionJob] = []
     private(set) var pendingAudioFileLanguageSelection: PendingAudioFileLanguageSelection?
+    private(set) var savedAudioRecordings: [PhoneSavedAudioRecording] = []
+    private(set) var isFileRecording = false
+    private(set) var fileRecordingElapsedSeconds: TimeInterval = 0
     private(set) var selectedBuiltInPackIDs = Set<String>()
     private(set) var selectedImportedVocabularyListIDs = Set<UUID>()
     var alertMessage: String?
@@ -34,10 +39,14 @@ final class PhoneAppModel {
     let speechController = SpeechTranscriptionController()
 
     @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private let fileManager = FileManager.default
     @ObservationIgnored private let vocabularyStore: ImportedVocabularyStore
     @ObservationIgnored private let transcriptStore: TranscriptHistoryStore
     @ObservationIgnored private var sessionBaseText = ""
     @ObservationIgnored private var audioFileTranscriptionTask: Task<Void, Never>?
+    @ObservationIgnored private var audioRecorder: AVAudioRecorder?
+    @ObservationIgnored private var fileRecordingStartedAt: Date?
+    @ObservationIgnored private var fileRecordingTimerTask: Task<Void, Never>?
 
     init() {
         vocabularyStore = ImportedVocabularyStore(storageKey: Self.importedVocabularyListsKey)
@@ -45,6 +54,7 @@ final class PhoneAppModel {
         livePreviewEnabled = defaults.object(forKey: Self.livePreviewKey) as? Bool ?? true
         importedVocabulary = vocabularyStore.load()
         transcriptHistory = transcriptStore.loadEntries()
+        savedAudioRecordings = loadSavedAudioRecordings()
 
         speechController.onTranscriptUpdate = { [weak self] transcript in
             guard let self else { return }
@@ -158,6 +168,50 @@ final class PhoneAppModel {
         Task { @MainActor in
             await requestAudioFileLanguageSelection(for: urls)
         }
+    }
+
+    func toggleFileRecording() {
+        Task {
+            if isFileRecording {
+                await stopFileRecording()
+            } else {
+                await startFileRecording()
+            }
+        }
+    }
+
+    func transcribeSavedRecording(_ recording: PhoneSavedAudioRecording) {
+        guard let url = urlForSavedRecording(recording) else {
+            alertMessage = "That recording file is missing."
+            savedAudioRecordings.removeAll { $0.id == recording.id }
+            persistSavedAudioRecordings()
+            return
+        }
+
+        enqueueAudioFiles([url])
+    }
+
+    func deleteSavedRecording(_ recording: PhoneSavedAudioRecording) {
+        guard !isFileRecording else {
+            alertMessage = "Stop the current recording before deleting saved recordings."
+            return
+        }
+
+        if let url = urlForSavedRecording(recording) {
+            try? fileManager.removeItem(at: url)
+        }
+        savedAudioRecordings.removeAll { $0.id == recording.id }
+        persistSavedAudioRecordings()
+    }
+
+    func urlForSavedRecording(_ recording: PhoneSavedAudioRecording) -> URL? {
+        let url = recordingURL(fileName: recording.fileName)
+        if fileManager.fileExists(atPath: url.path) {
+            return url
+        }
+
+        let legacyURL = legacyRecordingURL(fileName: recording.fileName)
+        return fileManager.fileExists(atPath: legacyURL.path) ? legacyURL : nil
     }
 
     private func requestAudioFileLanguageSelection(for urls: [URL]) async {
@@ -321,6 +375,88 @@ final class PhoneAppModel {
         }
     }
 
+    private func startFileRecording() async {
+        alertMessage = nil
+        refreshPermissions()
+
+        guard !speechController.isRecording else {
+            alertMessage = "Stop dictation before recording an audio file."
+            return
+        }
+
+        guard !isAudioFileTranscriptionActive else {
+            alertMessage = "Finish the current audio file transcription before recording."
+            return
+        }
+
+        guard await requestMicrophoneAccessForFileRecording() else {
+            refreshPermissions()
+            alertMessage = "Microphone access is needed to record audio files."
+            return
+        }
+
+        do {
+            let url = try nextRecordingURL()
+            try configureRecordingAudioSession()
+
+            let recorder = try AVAudioRecorder(url: url, settings: [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+            ])
+            recorder.isMeteringEnabled = true
+            recorder.prepareToRecord()
+
+            guard recorder.record() else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+
+            audioRecorder = recorder
+            fileRecordingStartedAt = Date()
+            fileRecordingElapsedSeconds = 0
+            audioLevel = 0
+            isFileRecording = true
+            startFileRecordingTimer()
+            refreshPermissions()
+        } catch {
+            audioRecorder = nil
+            fileRecordingStartedAt = nil
+            isFileRecording = false
+            audioLevel = 0
+            fileRecordingElapsedSeconds = 0
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    private func stopFileRecording() async {
+        guard isFileRecording, let recorder = audioRecorder else { return }
+
+        let url = recorder.url
+        let startedAt = fileRecordingStartedAt ?? Date()
+        recorder.stop()
+        stopFileRecordingTimer()
+
+        audioRecorder = nil
+        fileRecordingStartedAt = nil
+        isFileRecording = false
+        audioLevel = 0
+        fileRecordingElapsedSeconds = 0
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+
+        let duration = max(Date().timeIntervalSince(startedAt), 0)
+        let fileSize = savedRecordingFileSize(for: url)
+        let recording = PhoneSavedAudioRecording(
+            id: UUID(),
+            fileName: url.lastPathComponent,
+            createdAt: startedAt,
+            durationSeconds: duration,
+            fileSize: fileSize
+        )
+        savedAudioRecordings.insert(recording, at: 0)
+        persistSavedAudioRecordings()
+    }
+
     private func startAudioFileQueueIfNeeded() {
         guard audioFileTranscriptionTask == nil else { return }
 
@@ -432,6 +568,119 @@ final class PhoneAppModel {
             audioLevel = 0
             alertMessage = error.localizedDescription
         }
+    }
+
+    private func requestMicrophoneAccessForFileRecording() async -> Bool {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted:
+            return true
+        case .denied:
+            return false
+        case .undetermined:
+            return await AVAudioApplication.requestRecordPermission()
+        @unknown default:
+            return false
+        }
+    }
+
+    private func configureRecordingAudioSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setActive(true)
+    }
+
+    private func startFileRecordingTimer() {
+        fileRecordingTimerTask?.cancel()
+        fileRecordingTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                await MainActor.run {
+                    guard let self, self.isFileRecording, let startedAt = self.fileRecordingStartedAt else { return }
+                    self.fileRecordingElapsedSeconds = Date().timeIntervalSince(startedAt)
+                    self.audioRecorder?.updateMeters()
+                    if let recorder = self.audioRecorder {
+                        let power = recorder.averagePower(forChannel: 0)
+                        self.audioLevel = Self.normalizedAudioLevel(fromAveragePower: power)
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopFileRecordingTimer() {
+        fileRecordingTimerTask?.cancel()
+        fileRecordingTimerTask = nil
+    }
+
+    private static func normalizedAudioLevel(fromAveragePower power: Float) -> Double {
+        guard power.isFinite else { return 0 }
+        let normalized = pow(10, Double(power) / 35.0)
+        return min(max(normalized * 1.8, 0), 1)
+    }
+
+    private func nextRecordingURL() throws -> URL {
+        let directory = try recordingsDirectory()
+        let stamp = Self.recordingFileStamp(from: Date())
+        var candidate = directory.appendingPathComponent("GLSTT Recording \(stamp).m4a")
+        var suffix = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("GLSTT Recording \(stamp) \(suffix).m4a")
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private static func recordingFileStamp(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withDashSeparatorInDate]
+        return formatter.string(from: date)
+            .replacingOccurrences(of: ":", with: "-")
+    }
+
+    private func recordingsDirectory() throws -> URL {
+        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+        let directory = documentsDirectory
+            .appendingPathComponent("GLSTT Recordings", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func recordingURL(fileName: String) -> URL {
+        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+        return documentsDirectory
+            .appendingPathComponent("GLSTT Recordings", isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
+    private func legacyRecordingURL(fileName: String) -> URL {
+        let supportDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+        return supportDirectory
+            .appendingPathComponent("GLSTT", isDirectory: true)
+            .appendingPathComponent("Recordings", isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
+    private func savedRecordingFileSize(for url: URL) -> Int64? {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize.map(Int64.init)
+    }
+
+    private func loadSavedAudioRecordings() -> [PhoneSavedAudioRecording] {
+        guard let data = defaults.data(forKey: Self.savedAudioRecordingsKey),
+              let decoded = try? JSONDecoder().decode([PhoneSavedAudioRecording].self, from: data)
+        else {
+            return []
+        }
+
+        return decoded.filter { urlForSavedRecording($0) != nil }
+    }
+
+    private func persistSavedAudioRecordings() {
+        guard let data = try? JSONEncoder().encode(savedAudioRecordings) else { return }
+        defaults.set(data, forKey: Self.savedAudioRecordingsKey)
     }
 
     private func appendHistory(_ text: String) {
