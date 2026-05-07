@@ -6,6 +6,8 @@ import SwiftUI
 final class HUDPanelController: NSObject, NSWindowDelegate {
     private static let statusOriginXKey = "glstt.hud.status.origin.x"
     private static let statusOriginYKey = "glstt.hud.status.origin.y"
+    private static let compactOriginXKey = "glstt.hud.compact.origin.x"
+    private static let compactOriginYKey = "glstt.hud.compact.origin.y"
 
     private let statusPanel: NSPanel
     private let messagePanel: NSPanel
@@ -45,8 +47,11 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
             return
         }
 
-        UserDefaults.standard.set(statusPanel.frame.origin.x, forKey: Self.statusOriginXKey)
-        UserDefaults.standard.set(statusPanel.frame.origin.y, forKey: Self.statusOriginYKey)
+        guard let model else { return }
+
+        let keys = originKeys(for: model.hudDisplayMode)
+        UserDefaults.standard.set(statusPanel.frame.origin.x, forKey: keys.x)
+        UserDefaults.standard.set(statusPanel.frame.origin.y, forKey: keys.y)
         updateMessagePanelVisibility()
     }
 
@@ -90,13 +95,14 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
             hide()
             return
         }
+        statusPanel.hasShadow = model.hudDisplayMode != .compact
 
         let screen = NSScreen.main ?? NSScreen.screens.first
         guard let screen else { return }
 
-        let savedOrigin = savedStatusOrigin()
+        let savedOrigin = savedStatusOrigin(for: model.hudDisplayMode)
         let origin = clamp(
-            savedOrigin ?? defaultStatusOrigin(for: desiredSize, on: screen),
+            savedOrigin ?? defaultStatusOrigin(for: desiredSize, on: screen, displayMode: model.hudDisplayMode),
             size: desiredSize,
             screen: screen
         )
@@ -136,26 +142,45 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         messagePanel.orderFrontRegardless()
     }
 
-    private func defaultStatusOrigin(for size: CGSize, on screen: NSScreen) -> CGPoint {
+    private func defaultStatusOrigin(
+        for size: CGSize,
+        on screen: NSScreen,
+        displayMode: AppModel.HUDDisplayMode
+    ) -> CGPoint {
         let visibleFrame = screen.visibleFrame
+
+        if displayMode == .compact {
+            return CGPoint(
+                x: visibleFrame.midX - (size.width / 2),
+                y: visibleFrame.minY + 18
+            )
+        }
+
         return CGPoint(
             x: visibleFrame.midX - (size.width / 2),
             y: visibleFrame.maxY - size.height - 36
         )
     }
 
-    private func savedStatusOrigin() -> CGPoint? {
+    private func savedStatusOrigin(for displayMode: AppModel.HUDDisplayMode) -> CGPoint? {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: Self.statusOriginXKey) != nil,
-              defaults.object(forKey: Self.statusOriginYKey) != nil
+        let keys = originKeys(for: displayMode)
+        guard defaults.object(forKey: keys.x) != nil,
+              defaults.object(forKey: keys.y) != nil
         else {
             return nil
         }
 
         return CGPoint(
-            x: defaults.double(forKey: Self.statusOriginXKey),
-            y: defaults.double(forKey: Self.statusOriginYKey)
+            x: defaults.double(forKey: keys.x),
+            y: defaults.double(forKey: keys.y)
         )
+    }
+
+    private func originKeys(for displayMode: AppModel.HUDDisplayMode) -> (x: String, y: String) {
+        displayMode == .compact
+            ? (Self.compactOriginXKey, Self.compactOriginYKey)
+            : (Self.statusOriginXKey, Self.statusOriginYKey)
     }
 
     private func clamp(_ origin: CGPoint, size: CGSize, screen: NSScreen) -> CGPoint {
@@ -179,14 +204,10 @@ private struct HUDView: View {
     }
 
     private var compactBody: some View {
-        VStack(spacing: 10) {
-            CompactWaveBadge(level: statusAudioLevel, tint: statusAccentColor)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .background(backgroundShape)
-        .padding(6)
+        CompactWaveBadge(level: statusAudioLevel, tint: statusAccentColor)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Circle())
+            .background(backgroundShape)
     }
 
     private var transcriptBody: some View {
@@ -254,12 +275,18 @@ private struct HUDView: View {
         .padding(8)
     }
 
+    @ViewBuilder
     private var backgroundShape: some View {
-        RoundedRectangle(cornerRadius: model.hudDisplayMode == .compact ? 28 : 24, style: .continuous)
-            .fill(.ultraThinMaterial)
-            .overlay {
-                RoundedRectangle(cornerRadius: model.hudDisplayMode == .compact ? 28 : 24, style: .continuous)
-                    .strokeBorder(statusAccentColor.opacity(0.35), lineWidth: 1)
+        if model.hudDisplayMode == .compact {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.clear)
+        } else {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(statusAccentColor.opacity(0.35), lineWidth: 1)
+                }
             }
     }
 
@@ -443,18 +470,19 @@ private struct CompactWaveBadge: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(tint.opacity(0.12))
-                .frame(width: 72, height: 72)
+                .fill(Color.clear)
+                .frame(width: 52, height: 52)
 
             CenterOutLevelMeter(
                 level: level,
                 tint: tint,
-                barCount: 9,
-                barSize: CGSize(width: 5, height: 18),
-                spacing: 3
+                barCount: 5,
+                barSize: CGSize(width: 4, height: 22),
+                spacing: 4
             )
-            .frame(width: 54, height: 24)
+            .frame(width: 36, height: 30)
         }
+        .animation(.easeOut(duration: 0.06), value: level)
     }
 }
 

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1F100110000000000000001 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1F100100000000000000001 /* AppIntents.framework */; };
 		A1F100070000000000000001 /* GLSTTAudioFileExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A1F100010000000000000001 /* GLSTTAudioFileExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -36,6 +37,7 @@
 
 /* Begin PBXFileReference section */
 		847DE7EC2F95343C00DC31E0 /* GLSTT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GLSTT.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1F100100000000000000001 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		A1F100010000000000000001 /* GLSTTAudioFileExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = GLSTTAudioFileExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -80,6 +82,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1F100110000000000000001 /* AppIntents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -98,6 +101,7 @@
 			children = (
 				847DE7EE2F95343C00DC31E0 /* GLSTT */,
 				A1F100020000000000000001 /* GLSTTAudioFileExtension */,
+				A1F100100000000000000001 /* AppIntents.framework */,
 				847DE7ED2F95343C00DC31E0 /* Products */,
 			);
 			sourceTree = "<group>";

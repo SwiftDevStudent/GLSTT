@@ -20,6 +20,7 @@ final class AppModel {
     private static let importedVocabularyListsKey = "glstt.settings.importedVocabularyLists"
     private static let copyFailedInsertionsKey = "glstt.settings.copyFailedInsertions"
     private static let showTranscriptWindowOnFailureKey = "glstt.settings.showTranscriptWindowOnFailure"
+    private static let transcriptDatabaseName = "mac-transcripts.sqlite"
 
     enum HUDMode: Equatable {
         case hidden
@@ -142,6 +143,8 @@ final class AppModel {
     @ObservationIgnored
     private let vocabularyStore: ImportedVocabularyStore
     @ObservationIgnored
+    private let transcriptStore: TranscriptHistoryStore
+    @ObservationIgnored
     private var hudPanelController: HUDPanelController?
     @ObservationIgnored
     private var onboardingWindowController: OnboardingWindowController?
@@ -173,6 +176,7 @@ final class AppModel {
         self.previewMode = previewMode
         self.defaults = .standard
         self.vocabularyStore = ImportedVocabularyStore(storageKey: Self.importedVocabularyListsKey)
+        self.transcriptStore = TranscriptHistoryStore(filename: Self.transcriptDatabaseName)
         self.hudPanelController = nil
         self.onboardingWindowController = nil
         self.transcriptWindowController = nil
@@ -203,6 +207,8 @@ final class AppModel {
         self.finalInsertionEnabled = previewMode ? true : defaults.object(forKey: Self.finalInsertionKey) as? Bool ?? true
         self.contextualVocabularyEnabled = previewMode ? true : defaults.object(forKey: Self.contextualVocabularyKey) as? Bool ?? true
         self.importedVocabulary = previewMode ? ImportedVocabularySnapshot() : vocabularyStore.load()
+        self.transcriptHistory = previewMode ? [] : transcriptStore.loadEntries()
+        self.lastTranscript = transcriptHistory.first?.text ?? ""
         self.copyFailedInsertionsToClipboard = previewMode ? true : defaults.object(forKey: Self.copyFailedInsertionsKey) as? Bool ?? true
         self.showTranscriptWindowOnFailure = previewMode ? true : defaults.object(forKey: Self.showTranscriptWindowOnFailureKey) as? Bool ?? true
 
@@ -413,11 +419,11 @@ final class AppModel {
         case .compact:
             switch hudMode {
             case .hidden:
-                return CGSize(width: 92, height: 92)
+                return CGSize(width: 68, height: 68)
             case .message:
                 return CGSize(width: 260, height: 86)
             case .recording, .finalizing:
-                return CGSize(width: 92, height: 92)
+                return CGSize(width: 68, height: 68)
             }
         case .transcript:
             break
@@ -438,7 +444,7 @@ final class AppModel {
         case .off:
             return .zero
         case .compact:
-            return CGSize(width: 92, height: 92)
+            return CGSize(width: 68, height: 68)
         case .transcript:
             return CGSize(width: 620, height: 220)
         }
@@ -982,7 +988,13 @@ final class AppModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        transcriptHistory.insert(TranscriptHistoryEntry(text: trimmed), at: 0)
+        let entry = TranscriptHistoryEntry(text: trimmed)
+        transcriptHistory.removeAll { $0.text == trimmed }
+        transcriptHistory.insert(entry, at: 0)
+
+        if !previewMode {
+            transcriptStore.save(entry)
+        }
     }
 
     func importVocabularyList(from url: URL) {

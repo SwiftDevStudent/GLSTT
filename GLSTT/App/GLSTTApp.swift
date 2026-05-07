@@ -30,6 +30,15 @@ struct GLSTTApp: App {
                 .environment(appModel)
                 .environment(appUpdater)
         }
+        .commands {
+            CommandGroup(after: .toolbar) {
+                Picker("Floating Window", selection: $appModel.hudDisplayMode) {
+                    ForEach(AppModel.HUDDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+            }
+        }
 
         Settings {
             SettingsView()

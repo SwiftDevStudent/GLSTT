@@ -22,21 +22,6 @@ struct SettingsView: View {
                             subtitle: appModel.loginItemSummary,
                             isOn: $appModel.launchAtLoginEnabled
                         )
-
-                        Divider()
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Overlay")
-                                .font(.system(.headline, design: .rounded, weight: .semibold))
-
-                            Picker("Overlay", selection: $appModel.hudDisplayMode) {
-                                ForEach(AppModel.HUDDisplayMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                        }
                     }
                 }
 

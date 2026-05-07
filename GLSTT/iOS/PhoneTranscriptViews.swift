@@ -15,11 +15,66 @@ struct PhoneTranscriptHistorySection: View {
                 .frame(maxWidth: .infinity, minHeight: 180)
                 .listRowBackground(Color.clear)
             } else {
-                ForEach(appModel.transcriptHistory) { entry in
+                if let latestEntry = appModel.transcriptHistory.first {
+                    PhoneLatestTranscriptCard(entry: latestEntry) {
+                        appModel.copyTranscript(latestEntry.text)
+                    }
+                }
+
+                ForEach(appModel.transcriptHistory.dropFirst()) { entry in
                     NavigationLink(value: entry) {
                         PhoneTranscriptRow(entry: entry)
                     }
                 }
+            }
+        }
+    }
+}
+
+private struct PhoneLatestTranscriptCard: View {
+    let entry: TranscriptHistoryEntry
+    let copy: () -> Void
+
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button(action: copyWithFeedback) {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(copied ? .green : .accentColor)
+                        .contentTransition(.opacity)
+                }
+                .buttonStyle(.borderless)
+            }
+
+            Text(entry.text)
+                .font(.body)
+                .textSelection(.enabled)
+                .lineLimit(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func copyWithFeedback() {
+        copy()
+
+        withAnimation(.snappy(duration: 0.18)) {
+            copied = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.snappy(duration: 0.18)) {
+                copied = false
             }
         }
     }
@@ -50,6 +105,7 @@ private struct PhoneTranscriptRow: View {
 struct PhoneTranscriptDetailView: View {
     let entry: TranscriptHistoryEntry
     @Environment(PhoneAppModel.self) private var appModel
+    @State private var copied = false
 
     var body: some View {
         ScrollView {
@@ -66,13 +122,29 @@ struct PhoneTranscriptDetailView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle(entry.title)
+        .navigationTitle("Transcript")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Copy") {
-                    appModel.copyTranscript(entry.text)
+                Button(action: copyWithFeedback) {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                        .contentTransition(.opacity)
                 }
+            }
+        }
+    }
+
+    private func copyWithFeedback() {
+        appModel.copyTranscript(entry.text)
+
+        withAnimation(.snappy(duration: 0.18)) {
+            copied = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.snappy(duration: 0.18)) {
+                copied = false
             }
         }
     }

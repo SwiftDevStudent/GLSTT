@@ -1,5 +1,4 @@
 @preconcurrency import AVFAudio
-@preconcurrency import AVFoundation
 import Foundation
 import Speech
 #if os(macOS)
@@ -66,7 +65,6 @@ final class SpeechTranscriptionController {
     private var targetAudioFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
     private let microphoneProbe = AVAudioEngine()
-    private var captureProbeSession: AVCaptureSession?
 
     private struct SplitAudioChannels {
         let directoryURL: URL
@@ -669,11 +667,7 @@ final class SpeechTranscriptionController {
                 return false
             }
 
-            let fallbackGranted = await requestMicrophoneViaCaptureFlow()
-            if fallbackGranted {
-                ensureMicrophoneRegistration()
-            }
-            return fallbackGranted
+            return false
         @unknown default:
             return false
         }
@@ -708,44 +702,13 @@ final class SpeechTranscriptionController {
         case .denied:
             return false
         case .undetermined:
-            return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            return false
         @unknown default:
             return false
         }
     }
 
-    private func requestMicrophoneViaCaptureFlow() async -> Bool {
-        guard let microphone = AVCaptureDevice.default(for: .audio) else {
-            return false
-        }
-
-        do {
-            let input = try AVCaptureDeviceInput(device: microphone)
-            let session = AVCaptureSession()
-
-            if session.canAddInput(input) {
-                session.addInput(input)
-            }
-
-            captureProbeSession = session
-            session.startRunning()
-            session.stopRunning()
-            captureProbeSession = nil
-        } catch {
-            captureProbeSession = nil
-        }
-
-        let currentStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        if currentStatus != .notDetermined {
-            return currentStatus == .authorized
-        }
-
-        return await AVCaptureDevice.requestAccess(for: .audio)
-    }
-
     private func ensureMicrophoneRegistration() {
-        _ = AVCaptureDevice.default(for: .audio)
-
         let inputNode = microphoneProbe.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
         guard isUsableRecordingFormat(inputFormat) else {

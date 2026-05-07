@@ -1,5 +1,4 @@
 import AVFAudio
-import AVFoundation
 import Speech
 #if os(macOS)
 import ApplicationServices
@@ -21,10 +20,7 @@ struct AppPermissionsState: Equatable {
         Self(
             accessibilityTrusted: currentAccessibilityTrust,
             speech: Self.mapSpeechStatus(SFSpeechRecognizer.authorizationStatus()),
-            microphone: Self.mapMicrophoneStatus(
-                AVAudioApplication.shared.recordPermission,
-                captureStatus: AVCaptureDevice.authorizationStatus(for: .audio)
-            )
+            microphone: Self.mapMicrophoneStatus(AVAudioApplication.shared.recordPermission)
         )
     }
 
@@ -77,28 +73,14 @@ struct AppPermissionsState: Equatable {
         }
     }
 
-    private static func mapMicrophoneStatus(
-        _ status: AVAudioApplication.recordPermission,
-        captureStatus: AVAuthorizationStatus
-    ) -> AccessState {
+    private static func mapMicrophoneStatus(_ status: AVAudioApplication.recordPermission) -> AccessState {
         switch status {
         case .granted:
             return .granted
         case .denied:
             return .denied
         case .undetermined:
-            switch captureStatus {
-            case .authorized:
-                return .granted
-            case .denied:
-                return .denied
-            case .restricted:
-                return .restricted
-            case .notDetermined:
-                return .notDetermined
-            @unknown default:
-                return .restricted
-            }
+            return .notDetermined
         @unknown default:
             return .restricted
         }

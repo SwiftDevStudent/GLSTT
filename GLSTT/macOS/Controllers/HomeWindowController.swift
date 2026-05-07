@@ -39,11 +39,14 @@ final class HomeWindowController: NSWindowController {
 private struct HomeWindowView: View {
     @Environment(AppModel.self) private var appModel
     @State private var showingAudioImporter = false
+    @State private var isAudioDropTargeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             header
-            audioFileSection
+            if !appModel.audioFileTranscriptionJobs.isEmpty {
+                audioFileSection
+            }
             transcriptSection
             footer
         }
@@ -57,10 +60,6 @@ private struct HomeWindowView: View {
             if case .success(let urls) = result {
                 appModel.enqueueAudioFiles(urls)
             }
-        }
-        .dropDestination(for: URL.self) { urls, _ in
-            appModel.enqueueAudioFiles(urls)
-            return true
         }
         .sheet(item: languageSelectionBinding) { selection in
             MacAudioFileLanguageSelectionSheet(
@@ -83,37 +82,37 @@ private struct HomeWindowView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 16) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 48, height: 48)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("GLSTT")
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("GLSTT")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+
+                    HomeBadge(title: appModel.isRecordingActive ? "Listening" : "Ready", tint: appModel.isRecordingActive ? .green : .secondary)
+                }
 
                 Text(appModel.triggerSummary)
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.secondary)
-
-                HStack(spacing: 8) {
-                    HomeBadge(title: appModel.statusSummary, tint: appModel.isRecordingActive ? .green : .secondary)
-                    HomeBadge(title: appModel.hudDisplayMode.title, tint: .blue)
-                    HomeBadge(title: appModel.launchAtLoginBadgeTitle, tint: appModel.launchAtLoginEnabled ? .green : .secondary)
-                }
             }
 
             Spacer()
 
-            Button {
+            AudioImportSquareButton(isTargeted: isAudioDropTargeted) {
                 showingAudioImporter = true
-            } label: {
-                Label("Audio", systemImage: "waveform.badge.plus")
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
             }
-            .controlSize(.small)
             .disabled(appModel.isRecordingActive)
+            .dropDestination(for: URL.self) { urls, _ in
+                appModel.enqueueAudioFiles(urls)
+                return true
+            } isTargeted: { isTargeted in
+                isAudioDropTargeted = isTargeted
+            }
         }
     }
 
@@ -126,31 +125,19 @@ private struct HomeWindowView: View {
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Audio Files")
+                    Text("File Transcription")
                         .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    Text("Drop recordings here for local transcription.")
+                    Text(appModel.isAudioFileTranscriptionActive ? "Transcribing queued audio." : "Queue audio from the button above.")
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if appModel.audioFileTranscriptionJobs.isEmpty {
-                Text("No audio files queued.")
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                    )
-            } else {
-                MacAudioFileTranscriptionSections(
-                    jobs: appModel.audioFileTranscriptionJobs,
-                    compact: false
-                ) { job in
-                    appModel.openTranscriptOutput(for: job)
-                }
+            MacAudioFileTranscriptionSections(
+                jobs: appModel.audioFileTranscriptionJobs,
+                compact: false
+            ) { job in
+                appModel.openTranscriptOutput(for: job)
             }
         }
         .padding(12)
@@ -177,17 +164,41 @@ private struct HomeWindowView: View {
 
     private var footer: some View {
         HStack {
-            Button("Copy Latest") {
-                appModel.copyLastTranscript()
-            }
-            .disabled(appModel.lastTranscript.isEmpty)
-
             Spacer()
 
             SettingsLink {
                 Text("Open Settings")
             }
         }
+    }
+}
+
+private struct AudioImportSquareButton: View {
+    let isTargeted: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: isTargeted ? "arrow.down.doc.fill" : "waveform.badge.plus")
+                    .font(.system(size: 21, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+
+                Text("Audio")
+                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+            }
+            .frame(width: 70, height: 70)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isTargeted ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.07))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(isTargeted ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.08), lineWidth: 1)
+                    }
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Import audio file")
     }
 }
 

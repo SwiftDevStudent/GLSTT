@@ -21,15 +21,18 @@ private struct PhoneComposerCard: View {
     @FocusState private var isEditorFocused: Bool
     @State private var showingAudioImporter = false
     @State private var previewedTranscriptURL: URL?
+    @State private var draftCopied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             headerRow
 
-            PhoneAudioFileTranscriptionQueueView(
-                jobs: appModel.audioFileTranscriptionJobs,
-                openOutput: { previewedTranscriptURL = $0 }
-            )
+            if !appModel.audioFileTranscriptionJobs.isEmpty {
+                PhoneAudioFileTranscriptionQueueView(
+                    jobs: appModel.audioFileTranscriptionJobs,
+                    openOutput: { previewedTranscriptURL = $0 }
+                )
+            }
 
             if hasActiveBiasPacks {
                 Text("Biasing: \(appModel.selectedBiasSummary)")
@@ -149,12 +152,11 @@ private struct PhoneComposerCard: View {
     }
 
     private var copyButton: some View {
-        Button {
-            appModel.copyTranscript(appModel.draftText)
-        } label: {
-            Label("Copy", systemImage: "doc.on.doc")
+        Button(action: copyDraft) {
+            Label(draftCopied ? "Copied" : "Copy", systemImage: draftCopied ? "checkmark.circle.fill" : "doc.on.doc")
                 .foregroundStyle(.white)
                 .symbolRenderingMode(.monochrome)
+                .contentTransition(.opacity)
         }
         .controlSize(.regular)
         .modifier(PrimaryActionButtonStyleModifier())
@@ -170,10 +172,16 @@ private struct PhoneComposerCard: View {
             Button {
                 showingAudioImporter = true
             } label: {
-                Label("Audio", systemImage: "waveform")
+                VStack(spacing: 5) {
+                    Image(systemName: "waveform.badge.plus")
+                        .font(.headline.weight(.semibold))
+                    Text("Audio")
+                        .font(.caption2.weight(.semibold))
+                }
+                .frame(width: 58, height: 58)
             }
-            .controlSize(.regular)
             .buttonStyle(.bordered)
+            .buttonBorderShape(.roundedRectangle(radius: 16))
             .disabled(appModel.isRecording)
 
             Menu {
@@ -201,10 +209,26 @@ private struct PhoneComposerCard: View {
                     }
                 }
             } label: {
-                Label("Packs", systemImage: "square.stack.3d.up")
+                Image(systemName: "square.stack.3d.up")
+                    .frame(width: 44, height: 44)
             }
             .controlSize(.regular)
             .buttonStyle(.bordered)
+        }
+    }
+
+    private func copyDraft() {
+        appModel.copyTranscript(appModel.draftText)
+
+        withAnimation(.snappy(duration: 0.18)) {
+            draftCopied = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.snappy(duration: 0.18)) {
+                draftCopied = false
+            }
         }
     }
 }
@@ -223,30 +247,18 @@ private struct PhoneAudioFileTranscriptionQueueView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if jobs.isEmpty {
-                Text("Drop an audio file here or tap Audio to queue a recording.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                    )
-            } else {
-                if !activeJobs.isEmpty {
-                    PhoneAudioFileTranscriptionJobSection(title: "Active Queue") {
-                        ForEach(activeJobs) { job in
-                            PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
-                        }
+            if !activeJobs.isEmpty {
+                PhoneAudioFileTranscriptionJobSection(title: "File Transcription") {
+                    ForEach(activeJobs) { job in
+                        PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
                     }
                 }
+            }
 
-                if !completedJobs.isEmpty {
-                    PhoneAudioFileTranscriptionJobSection(title: "Completed Outputs") {
-                        ForEach(completedJobs) { job in
-                            PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
-                        }
+            if !completedJobs.isEmpty {
+                PhoneAudioFileTranscriptionJobSection(title: "Completed Outputs") {
+                    ForEach(completedJobs) { job in
+                        PhoneAudioFileTranscriptionJobRow(job: job, openOutput: openOutput)
                     }
                 }
             }
