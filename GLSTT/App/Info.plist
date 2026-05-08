@@ -48,6 +48,8 @@
 	<string>$(GLSTT_UPDATE_FEED_URL)</string>
 	<key>GLSTTUpdaterExpectedTeamID</key>
 	<string>$(DEVELOPMENT_TEAM)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

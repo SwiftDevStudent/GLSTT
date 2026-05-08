@@ -23,6 +23,11 @@ Use this skill for changes to the `GLSTT` app.
 
 - Do not use shell `xcodebuild` in this repo.
 - Use `mcp__xcodebuildmcp__` for builds, cleans, launches, simulator sessions, and session defaults.
+- When the user wants a macOS build they can open from Spotlight, install the current build with `script/install_latest_macos_build.sh` instead of leaving it in DerivedData. The script replaces `/Applications/GLSTT.app`, registers it with Launch Services, and accepts `--launch` to open the installed copy.
+- Normal Xcode macOS builds also run the target build phase script `script/install_built_macos_app.sh`, which skips non-macOS builds and archives, then replaces and registers `/Applications/GLSTT.app`.
+- Keep Launch Services and Spotlight pointed at a single app bundle. The standard launchable copy is `/Applications/GLSTT.app`; remove or unregister duplicate `GLSTT.app` bundles from `~/Applications`, `/tmp`, and DerivedData when they appear.
+- The target install build phase intentionally sets `ENABLE_USER_SCRIPT_SANDBOXING = NO` for `GLSTT`; Xcode's script sandbox blocks `ditto` from recursively reading the built `.app` bundle.
+- If Xcode displays raw `project.pbxproj` text, verify project validity with `plutil`/`xcodebuild -list`, then check Xcode's Code Review mode. `View > Hide Code Review` restores the normal project editor tabs when Code Review is the cause.
 - The macOS app now has a built-in updater:
   - configure `GLSTT_UPDATE_FEED_URL` in target build settings
   - host a JSON feed described in `docs/auto-update.md`
@@ -78,3 +83,4 @@ Use this skill for changes to the `GLSTT` app.
   - Accessibility insertion
 - Prefer smaller shared stores/services over bloated app models, and keep SwiftUI scenes split into focused view files.
 - If cross-app insertion or global key capture stops working, check sandbox/signing/privacy settings before rewriting app logic.
+- If dictation gets stuck with "A dictation session is already in progress", use or preserve the app-level Stop Current Session action. It must cancel `SpeechAnalyzer`, clear the speech controller, file recording/transcription work, HUD state, and reset the hotkey state machine.

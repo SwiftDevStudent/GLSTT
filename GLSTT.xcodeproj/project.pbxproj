@@ -126,6 +126,7 @@
 				847DE7E92F95343C00DC31E0 /* Frameworks */,
 				847DE7EA2F95343C00DC31E0 /* Resources */,
 				A1F100060000000000000001 /* Embed App Extensions */,
+				A1F100120000000000000001 /* Install macOS App to Applications */,
 			);
 			buildRules = (
 			);
@@ -218,6 +219,31 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1F100120000000000000001 /* Install macOS App to Applications */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/script/install_built_macos_app.sh",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)",
+			);
+			name = "Install macOS App to Applications";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"/Applications/GLSTT.app",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$SRCROOT/script/install_built_macos_app.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		847DE7E82F95343C00DC31E0 /* Sources */ = {
@@ -380,6 +406,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
@@ -439,6 +466,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;

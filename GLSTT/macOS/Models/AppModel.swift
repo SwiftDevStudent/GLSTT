@@ -170,6 +170,10 @@ final class AppModel {
     private var fileRecordingStartedAt: Date?
     @ObservationIgnored
     private var fileRecordingTimerTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var applicationActiveObserver: NSObjectProtocol?
+    @ObservationIgnored
+    private var workspaceWakeObserver: NSObjectProtocol?
     private let previewMode: Bool
     @ObservationIgnored
     private var isSyncingLaunchAtLogin = false
@@ -255,6 +259,7 @@ final class AppModel {
             hudPanelController = HUDPanelController(model: self)
             syncHotkeyPreferences(preferred: .toggle)
             hotkeyMonitor.start()
+            installHotkeyRecoveryObservers()
             if shouldPresentOnboarding {
                 onboardingWindowController = OnboardingWindowController(model: self) { [weak self] in
                     self?.markOnboardingDismissed()
@@ -274,6 +279,12 @@ final class AppModel {
     }
 
     isolated deinit {
+        if let applicationActiveObserver {
+            NotificationCenter.default.removeObserver(applicationActiveObserver)
+        }
+        if let workspaceWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceWakeObserver)
+        }
         hotkeyMonitor.stop()
     }
 
@@ -347,6 +358,13 @@ final class AppModel {
 
     var isBusyWithAudioWork: Bool {
         speechController.isRecording || isFileRecording || isAudioFileTranscriptionActive
+    }
+
+    var canStopCurrentSession: Bool {
+        speechController.isRecording
+            || isFileRecording
+            || isAudioFileTranscriptionActive
+            || pendingAudioFileLanguageSelection != nil
     }
 
     var isAudioFileTranscriptionActive: Bool {
@@ -491,6 +509,11 @@ final class AppModel {
         permissions = AppPermissionsState.current()
     }
 
+    func refreshMenuBarState() {
+        refreshPermissions()
+        recoverHotkeyMonitorIfIdle()
+    }
+
     func showPermissionsWindow() {
         if onboardingWindowController == nil {
             onboardingWindowController = OnboardingWindowController(model: self) { [weak self] in
@@ -595,6 +618,12 @@ final class AppModel {
             } else {
                 await startFileRecording()
             }
+        }
+    }
+
+    func stopCurrentSession() {
+        Task { @MainActor in
+            await stopCurrentSessionNow()
         }
     }
 
@@ -717,10 +746,17 @@ final class AppModel {
         hudDismissTask?.cancel()
         refreshPermissions()
 
-        guard !isFileRecording else { return }
-        guard !isAudioFileTranscriptionActive else { return }
+        guard !isFileRecording else {
+            hotkeyMonitor.resetState()
+            return
+        }
+        guard !isAudioFileTranscriptionActive else {
+            hotkeyMonitor.resetState()
+            return
+        }
 
         guard permissions.accessibilityTrusted else {
+            hotkeyMonitor.resetState()
             requestAccessibilityAccess()
             return
         }
@@ -748,6 +784,7 @@ final class AppModel {
             refreshPermissions()
             liveInsertionSession = nil
             insertionTarget = nil
+            hotkeyMonitor.resetState()
             showMessage(error.localizedDescription, isError: true)
         }
     }
@@ -913,6 +950,50 @@ final class AppModel {
         defaults.set(data, forKey: Self.savedAudioRecordingsKey)
     }
 
+    private func stopCurrentSessionNow() async {
+        let hadSession = canStopCurrentSession
+
+        hudDismissTask?.cancel()
+        pendingAudioFileLanguageSelection = nil
+        liveInsertionSession = nil
+        insertionTarget = nil
+        finalizedTranscript = ""
+        volatileTranscript = ""
+        audioLevel = 0
+
+        if speechController.isRecording {
+            await speechController.cancelCurrentSession()
+        }
+
+        if isFileRecording {
+            await stopFileRecording()
+        } else {
+            audioRecorder?.stop()
+            stopFileRecordingTimer()
+            audioRecorder = nil
+            fileRecordingStartedAt = nil
+            fileRecordingElapsedSeconds = 0
+            isFileRecording = false
+        }
+
+        if audioFileTranscriptionTask != nil || audioFileTranscriptionJobs.contains(where: { !$0.isComplete }) {
+            audioFileTranscriptionTask?.cancel()
+            audioFileTranscriptionTask = nil
+            for index in audioFileTranscriptionJobs.indices where !audioFileTranscriptionJobs[index].isComplete {
+                audioFileTranscriptionJobs[index].status = .failed("Stopped by user.")
+            }
+        }
+
+        hotkeyMonitor.resetState()
+        refreshPermissions()
+
+        if hadSession {
+            showMessage("Stopped current session.", isError: false)
+        } else {
+            showMessage("No active session to stop.", isError: false)
+        }
+    }
+
     private func startAudioFileQueueIfNeeded() {
         guard audioFileTranscriptionTask == nil else { return }
 
@@ -999,7 +1080,14 @@ final class AppModel {
     }
 
     private func finishRecording() async {
-        guard speechController.isRecording else { return }
+        guard speechController.isRecording else {
+            hotkeyMonitor.resetState()
+            return
+        }
+
+        defer {
+            hotkeyMonitor.resetState()
+        }
 
         hudMode = .finalizing
         syncHUDVisibility()
@@ -1181,6 +1269,34 @@ final class AppModel {
 
     private func markOnboardingDismissed() {
         defaults.set(true, forKey: Self.onboardingDismissedKey)
+    }
+
+    private func installHotkeyRecoveryObservers() {
+        applicationActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.recoverHotkeyMonitorIfIdle()
+            }
+        }
+
+        workspaceWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.recoverHotkeyMonitorIfIdle()
+            }
+        }
+    }
+
+    private func recoverHotkeyMonitorIfIdle() {
+        guard !previewMode else { return }
+        guard !speechController.isRecording, !isFileRecording else { return }
+        hotkeyMonitor.restart()
     }
 
     private func maybePromptForLaunchAtLogin() {

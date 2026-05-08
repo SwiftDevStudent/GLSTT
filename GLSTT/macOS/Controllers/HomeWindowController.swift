@@ -105,6 +105,18 @@ private struct HomeWindowView: View {
 
             Spacer()
 
+            if appModel.canStopCurrentSession {
+                Button {
+                    appModel.stopCurrentSession()
+                } label: {
+                    Label("Stop", systemImage: "stop.circle.fill")
+                        .font(.system(.callout, design: .rounded, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.large)
+            }
+
             AudioImportSquareButton(isTargeted: isAudioDropTargeted) {
                 showingAudioImporter = true
             }

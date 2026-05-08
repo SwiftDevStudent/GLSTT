@@ -57,6 +57,19 @@ struct GLSTTCoreTests {
         #expect(configuration.toggleKey != .rightOption)
     }
 
+    @Test("Hotkey state machine reset clears a latched recording state")
+    func hotkeyResetClearsLatchedRecordingState() {
+        var machine = HotkeyStateMachine()
+
+        _ = machine.handle(.keyPressed(.rightOption))
+        _ = machine.handle(.keyReleased(.rightOption))
+        #expect(machine.handle(.keyPressed(.rightOption)) == [.cancelDoubleTapWindow, .beginRecording])
+
+        machine.reset()
+
+        #expect(machine.handle(.keyPressed(.rightOption)) == [.scheduleHoldDebounce])
+    }
+
     @Test("Transcript assembly keeps volatile text separate until final")
     func transcriptAssemblyFlow() {
         var assembly = TranscriptAssembly()

@@ -212,6 +212,23 @@ final class SpeechTranscriptionController {
         return text
     }
 
+    func cancelCurrentSession() async {
+        isRecording = false
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        inputContinuation?.finish()
+        resultsTask?.cancel()
+
+        if let analyzer {
+            await analyzer.cancelAndFinishNow()
+        }
+
+        transcriptAssembly.reset()
+        cleanup()
+        onTranscriptUpdate?(transcriptAssembly)
+        onAudioLevelUpdate?(0)
+    }
+
     func transcribeAudioFile(
         at url: URL,
         locale requestedLocale: Locale? = nil,

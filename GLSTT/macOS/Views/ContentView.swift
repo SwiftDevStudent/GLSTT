@@ -7,218 +7,25 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(AppUpdater.self) private var updater
-    @State private var showingTranscriptHistory = false
-    @State private var showingAudioImporter = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            permissionSection
-            MacAudioRecorderView(compact: true)
-                .environment(appModel)
-            audioFileSection
-            transcriptSection
-            softwareUpdateSection
-            actionSection
-        }
-        .padding(16)
-        .frame(width: 320)
-        .fileImporter(
-            isPresented: $showingAudioImporter,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: true
-        ) { result in
-            if case .success(let urls) = result {
-                appModel.enqueueAudioFiles(urls)
-            }
-        }
-        .dropDestination(for: URL.self) { urls, _ in
-            appModel.enqueueAudioFiles(urls)
-            return true
-        }
-        .task {
-            appModel.refreshPermissions()
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("GLSTT")
-                .font(.system(.title2, design: .rounded, weight: .semibold))
-            Text(appModel.triggerSummary)
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var audioFileSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Audio Files")
-                    .font(.system(.headline, design: .rounded))
-
-                Spacer()
-
-                Button {
-                    showingAudioImporter = true
-                } label: {
-                    Label("Add", systemImage: "plus")
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primary.opacity(0.08))
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(appModel.isBusyWithAudioWork)
-            }
-
-            if appModel.audioFileTranscriptionJobs.isEmpty {
-                Text("Drop recordings here or choose files to transcribe them into Recent Transcripts.")
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                    )
-            } else {
-                MacAudioFileTranscriptionSections(
-                    jobs: appModel.audioFileTranscriptionJobs,
-                    compact: true
-                ) { job in
-                    appModel.openTranscriptOutput(for: job)
-                }
-            }
-        }
-    }
-
-    private var permissionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            PermissionRow(title: "Accessibility", detail: appModel.permissions.accessibilitySummary, isGranted: appModel.permissions.accessibilityTrusted)
-            PermissionRow(title: "Speech", detail: appModel.permissions.speechSummary, isGranted: appModel.permissions.speech == .granted)
-            PermissionRow(title: "Microphone", detail: appModel.permissions.microphoneSummary, isGranted: appModel.permissions.microphone == .granted)
-        }
-    }
-
-    private var transcriptSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Text("Recent Transcripts")
-                    .font(.system(.headline, design: .rounded))
-
-                Spacer()
-
-                Button(action: {
-                    showingTranscriptHistory.toggle()
-                }) {
-                    Label(showingTranscriptHistory ? "Hide" : "Show", systemImage: showingTranscriptHistory ? "chevron.up" : "chevron.down")
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primary.opacity(0.08))
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-
-            if let latestEntry = appModel.transcriptHistory.first {
-                Text(latestEntry.title)
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-            } else {
-                Text("Nothing captured yet.")
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-            }
-
-            if showingTranscriptHistory {
-                ScrollView {
-                    MacTranscriptHistoryList(
-                        entries: appModel.transcriptHistory,
-                        emptyMessage: "Use your shortcut to start dictation and your recent captures will show up here.",
-                        compact: true,
-                        copy: appModel.copyTranscript
-                    )
-                }
-                .frame(maxHeight: 220)
-                .clipped()
-            }
-        }
-    }
-
-    private var softwareUpdateSection: some View {
-        SoftwareUpdateSectionView(compact: true)
-    }
-
-    private var actionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button("Refresh Permissions") {
-                appModel.refreshPermissions()
-            }
-
-            Button("Request Accessibility Access") {
-                appModel.requestAccessibilityAccess()
-            }
-
-            Button("Request Speech & Microphone Access") {
-                Task {
-                    await appModel.requestSpeechAndMicrophoneAccess()
-                }
-            }
-
-            Button("Show Permissions Window") {
-                appModel.showPermissionsWindow()
-            }
-
             Button("Open Window") {
                 appModel.showHomeWindow()
             }
 
-            Button("Open Accessibility Settings") {
-                appModel.openAccessibilitySettings()
-            }
-
-            Button("Open Speech Settings") {
-                appModel.openSpeechSettings()
-            }
-
-            Button("Open Microphone Settings") {
-                appModel.openMicrophoneSettings()
+            if appModel.canStopCurrentSession {
+                Button("Stop Current Session") {
+                    appModel.stopCurrentSession()
+                }
             }
 
             if !appModel.lastTranscript.isEmpty {
                 Button("Copy Last Transcript") {
                     appModel.copyLastTranscript()
-                }
-
-                Button("Open Main Window") {
-                    appModel.showTranscriptWindow()
                 }
             }
 
@@ -233,6 +40,11 @@ struct ContentView: View {
             }
         }
         .buttonStyle(.plain)
+        .padding(12)
+        .frame(width: 180)
+        .task {
+            appModel.refreshMenuBarState()
+        }
     }
 }
 

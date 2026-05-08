@@ -187,6 +187,10 @@ struct HotkeyStateMachine {
         self = Self(configuration: configuration)
     }
 
+    mutating func reset() {
+        self = Self(configuration: configuration)
+    }
+
     mutating func handle(_ event: HotkeyStateMachineEvent) -> [HotkeyStateMachineCommand] {
         switch event {
         case .keyPressed(let key):
@@ -408,13 +412,33 @@ final class HotkeyMonitor {
     }
 
     func stop() {
+        removeEventMonitors()
+        resetState()
+    }
+
+    func restart() {
+        let configuration = machine.configuration
+        stop()
+        machine.updateConfiguration(configuration)
+        start()
+    }
+
+    func resetState() {
         holdDebounceTask?.cancel()
         doubleTapTask?.cancel()
         holdDebounceTask = nil
         doubleTapTask = nil
         pressedKeys.removeAll()
         suppressedTriggerKeys.removeAll()
+        machine.reset()
+    }
 
+    func updateConfiguration(_ configuration: HotkeyConfiguration) {
+        resetState()
+        machine.updateConfiguration(configuration.normalized)
+    }
+
+    private func removeEventMonitors() {
         if let globalFlagsMonitor {
             NSEvent.removeMonitor(globalFlagsMonitor)
             self.globalFlagsMonitor = nil
@@ -439,16 +463,6 @@ final class HotkeyMonitor {
             NSEvent.removeMonitor(localKeyUpMonitor)
             self.localKeyUpMonitor = nil
         }
-    }
-
-    func updateConfiguration(_ configuration: HotkeyConfiguration) {
-        holdDebounceTask?.cancel()
-        doubleTapTask?.cancel()
-        holdDebounceTask = nil
-        doubleTapTask = nil
-        pressedKeys.removeAll()
-        suppressedTriggerKeys.removeAll()
-        machine.updateConfiguration(configuration.normalized)
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
