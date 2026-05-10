@@ -17,11 +17,12 @@ struct ContentView: View {
                 appModel.showHomeWindow()
             }
 
-            if appModel.canStopCurrentSession {
-                Button("Stop Current Session") {
-                    appModel.stopCurrentSession()
-                }
+            Button {
+                appModel.stopCurrentSession()
+            } label: {
+                Label("Stop Current Session", systemImage: "stop.circle")
             }
+            .disabled(!appModel.canStopCurrentSession)
 
             if !appModel.lastTranscript.isEmpty {
                 Button("Copy Last Transcript") {

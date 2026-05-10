@@ -144,19 +144,8 @@ private struct MacRecordingLevelMeter: View {
     let level: Double
 
     var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<5, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(Color.red.opacity(level > 0.02 ? 0.95 : 0.35))
-                    .frame(width: 4, height: height(for: index))
-            }
-        }
-    }
-
-    private func height(for index: Int) -> Double {
-        let base = [8.0, 14.0, 20.0, 14.0, 8.0][index]
-        guard level > 0.02 else { return base }
-        return base + (level * [6.0, 10.0, 14.0, 10.0, 6.0][index])
+        MacAudioLevelMeter(level: level, tint: .red, isActive: level > 0.02, style: .fileRecording)
+            .frame(width: 36, height: 30)
     }
 }
 #endif

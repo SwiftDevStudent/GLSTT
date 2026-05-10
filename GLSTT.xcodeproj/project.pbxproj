@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1F101010000000000000001 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1F101100000000000000001 /* ActivityKit.framework */; platformFilter = ios; };
+		A1F101020000000000000001 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1F101100000000000000001 /* ActivityKit.framework */; };
+		A1F101030000000000000001 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1F101110000000000000001 /* WidgetKit.framework */; };
+		A1F101040000000000000001 /* GLSTTLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A1F101120000000000000001 /* GLSTTLiveActivityExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A1F100110000000000000001 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1F100100000000000000001 /* AppIntents.framework */; };
 		A1F100070000000000000001 /* GLSTTAudioFileExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A1F100010000000000000001 /* GLSTTAudioFileExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -19,6 +23,13 @@
 			remoteGlobalIDString = A1F100080000000000000001;
 			remoteInfo = GLSTTAudioFileExtension;
 		};
+		A1F1010D0000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 847DE7E42F95343C00DC31E0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1F101080000000000000001;
+			remoteInfo = GLSTTLiveActivityExtension;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -29,6 +40,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				A1F100070000000000000001 /* GLSTTAudioFileExtension.appex in Embed App Extensions */,
+				A1F101040000000000000001 /* GLSTTLiveActivityExtension.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -37,6 +49,9 @@
 
 /* Begin PBXFileReference section */
 		847DE7EC2F95343C00DC31E0 /* GLSTT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GLSTT.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1F101100000000000000001 /* ActivityKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
+		A1F101110000000000000001 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		A1F101120000000000000001 /* GLSTTLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = GLSTTLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1F100100000000000000001 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		A1F100010000000000000001 /* GLSTTAudioFileExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = GLSTTAudioFileExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -55,6 +70,13 @@
 				Info.plist,
 			);
 			target = A1F100080000000000000001 /* GLSTTAudioFileExtension */;
+		};
+		A1F1010E0000000000000001 /* Exceptions for "GLSTTLiveActivityExtension" folder in "GLSTTLiveActivityExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A1F101080000000000000001 /* GLSTTLiveActivityExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -75,6 +97,19 @@
 			path = GLSTTAudioFileExtension;
 			sourceTree = "<group>";
 		};
+		A1F101200000000000000001 /* GLSTTLiveActivityExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A1F1010E0000000000000001 /* Exceptions for "GLSTTLiveActivityExtension" folder in "GLSTTLiveActivityExtension" target */,
+			);
+			path = GLSTTLiveActivityExtension;
+			sourceTree = "<group>";
+		};
+		A1F101210000000000000001 /* LiveActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = GLSTT/Shared/LiveActivity;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,7 +117,17 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1F101010000000000000001 /* ActivityKit.framework in Frameworks */,
 				A1F100110000000000000001 /* AppIntents.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1F101050000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1F101020000000000000001 /* ActivityKit.framework in Frameworks */,
+				A1F101030000000000000001 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -101,6 +146,10 @@
 			children = (
 				847DE7EE2F95343C00DC31E0 /* GLSTT */,
 				A1F100020000000000000001 /* GLSTTAudioFileExtension */,
+				A1F101200000000000000001 /* GLSTTLiveActivityExtension */,
+				A1F101210000000000000001 /* LiveActivity */,
+				A1F101100000000000000001 /* ActivityKit.framework */,
+				A1F101110000000000000001 /* WidgetKit.framework */,
 				A1F100100000000000000001 /* AppIntents.framework */,
 				847DE7ED2F95343C00DC31E0 /* Products */,
 			);
@@ -111,6 +160,7 @@
 			children = (
 				847DE7EC2F95343C00DC31E0 /* GLSTT.app */,
 				A1F100010000000000000001 /* GLSTTAudioFileExtension.appex */,
+				A1F101120000000000000001 /* GLSTTLiveActivityExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -126,12 +176,12 @@
 				847DE7E92F95343C00DC31E0 /* Frameworks */,
 				847DE7EA2F95343C00DC31E0 /* Resources */,
 				A1F100060000000000000001 /* Embed App Extensions */,
-				A1F100120000000000000001 /* Install macOS App to Applications */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				A1F1000C0000000000000001 /* PBXTargetDependency */,
+				A1F1010C0000000000000001 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				847DE7EE2F95343C00DC31E0 /* GLSTT */,
@@ -165,6 +215,29 @@
 			productReference = A1F100010000000000000001 /* GLSTTAudioFileExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A1F101080000000000000001 /* GLSTTLiveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1F101090000000000000001 /* Build configuration list for PBXNativeTarget "GLSTTLiveActivityExtension" */;
+			buildPhases = (
+				A1F101060000000000000001 /* Sources */,
+				A1F101050000000000000001 /* Frameworks */,
+				A1F101070000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A1F101200000000000000001 /* GLSTTLiveActivityExtension */,
+				A1F101210000000000000001 /* LiveActivity */,
+			);
+			name = GLSTTLiveActivityExtension;
+			packageProductDependencies = (
+			);
+			productName = GLSTTLiveActivityExtension;
+			productReference = A1F101120000000000000001 /* GLSTTLiveActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -179,6 +252,9 @@
 						CreatedOnToolsVersion = 26.5;
 					};
 					A1F100080000000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					A1F101080000000000000001 = {
 						CreatedOnToolsVersion = 26.5;
 					};
 				};
@@ -199,6 +275,7 @@
 			targets = (
 				847DE7EB2F95343C00DC31E0 /* GLSTT */,
 				A1F100080000000000000001 /* GLSTTAudioFileExtension */,
+				A1F101080000000000000001 /* GLSTTLiveActivityExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -218,32 +295,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		A1F100120000000000000001 /* Install macOS App to Applications */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
+		A1F101070000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/script/install_built_macos_app.sh",
-				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)",
-			);
-			name = "Install macOS App to Applications";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"/Applications/GLSTT.app",
-			);
 			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/zsh;
-			shellScript = "\"$SRCROOT/script/install_built_macos_app.sh\"\n";
 		};
-/* End PBXShellScriptBuildPhase section */
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		847DE7E82F95343C00DC31E0 /* Sources */ = {
@@ -260,6 +319,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1F101060000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -267,6 +333,12 @@
 			isa = PBXTargetDependency;
 			target = A1F100080000000000000001 /* GLSTTAudioFileExtension */;
 			targetProxy = A1F1000D0000000000000001 /* PBXContainerItemProxy */;
+		};
+		A1F1010C0000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = A1F101080000000000000001 /* GLSTTLiveActivityExtension */;
+			targetProxy = A1F1010D0000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -580,6 +652,73 @@
 			};
 			name = Release;
 		};
+		A1F1010A0000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = GLSTTLiveActivityExtension/GLSTTLiveActivityExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z5F6B8QVKJ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GLSTTLiveActivityExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swiftdev.GLSTT.LiveActivityExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A1F1010B0000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = GLSTTLiveActivityExtension/GLSTTLiveActivityExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z5F6B8QVKJ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GLSTTLiveActivityExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swiftdev.GLSTT.LiveActivityExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -606,6 +745,15 @@
 			buildConfigurations = (
 				A1F1000A0000000000000001 /* Debug */,
 				A1F1000B0000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1F101090000000000000001 /* Build configuration list for PBXNativeTarget "GLSTTLiveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1F1010A0000000000000001 /* Debug */,
+				A1F1010B0000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

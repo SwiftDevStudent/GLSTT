@@ -64,6 +64,7 @@ final class SpeechTranscriptionController {
     private var transcriptAssembly = TranscriptAssembly()
     private var targetAudioFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
+    private var converterInputFormat: AVAudioFormat?
     private let microphoneProbe = AVAudioEngine()
 
     private struct SplitAudioChannels {
@@ -156,11 +157,12 @@ final class SpeechTranscriptionController {
         self.analyzer = analyzer
         self.inputContinuation = continuation
         self.targetAudioFormat = targetAudioFormat
-        self.converter = inputFormat == targetAudioFormat ? nil : AVAudioConverter(from: inputFormat, to: targetAudioFormat)
+        self.converter = nil
+        self.converterInputFormat = nil
         self.resultsTask = consumeResults(from: transcriber)
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
             guard let self else { return }
             Task { @MainActor in
                 self.processAudioBuffer(buffer)
@@ -514,6 +516,7 @@ final class SpeechTranscriptionController {
         transcriber = nil
         inputContinuation = nil
         converter = nil
+        converterInputFormat = nil
         targetAudioFormat = nil
     }
 
@@ -531,8 +534,8 @@ final class SpeechTranscriptionController {
 
     private func convertIfNeeded(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard let targetAudioFormat else { return nil }
-        guard buffer.format != targetAudioFormat else { return buffer }
-        guard let converter else { return nil }
+        guard !audioFormatsMatch(buffer.format, targetAudioFormat) else { return buffer }
+        guard let converter = converter(from: buffer.format, to: targetAudioFormat) else { return nil }
 
         let frameCapacity = AVAudioFrameCount(
             ceil(Double(buffer.frameLength) * targetAudioFormat.sampleRate / buffer.format.sampleRate)
@@ -568,6 +571,21 @@ final class SpeechTranscriptionController {
         @unknown default:
             return nil
         }
+    }
+
+    private func converter(from sourceFormat: AVAudioFormat, to targetFormat: AVAudioFormat) -> AVAudioConverter? {
+        if
+            let converter,
+            let converterInputFormat,
+            audioFormatsMatch(converterInputFormat, sourceFormat)
+        {
+            return converter
+        }
+
+        let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+        self.converter = converter
+        converterInputFormat = converter == nil ? nil : sourceFormat
+        return converter
     }
 
     private func consumeResults(from transcriber: DictationTranscriber) -> Task<Void, Never> {
@@ -698,7 +716,7 @@ final class SpeechTranscriptionController {
         }
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 256, format: inputFormat) { _, _ in }
+        inputNode.installTap(onBus: 0, bufferSize: 256, format: nil) { _, _ in }
 
         defer {
             microphoneProbe.stop()
@@ -733,7 +751,7 @@ final class SpeechTranscriptionController {
         }
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 256, format: inputFormat) { _, _ in }
+        inputNode.installTap(onBus: 0, bufferSize: 256, format: nil) { _, _ in }
 
         do {
             microphoneProbe.prepare()
@@ -779,6 +797,13 @@ final class SpeechTranscriptionController {
         format.sampleRate > 0 && format.channelCount > 0
     }
 
+    private func audioFormatsMatch(_ lhs: AVAudioFormat, _ rhs: AVAudioFormat) -> Bool {
+        lhs.sampleRate == rhs.sampleRate
+            && lhs.channelCount == rhs.channelCount
+            && lhs.commonFormat == rhs.commonFormat
+            && lhs.isInterleaved == rhs.isInterleaved
+    }
+
     private func unavailableAudioInputError() -> SpeechTranscriptionError {
         #if targetEnvironment(simulator)
         return .unavailableAudioInput("Microphone input isn't available in this simulator session. Enable Audio Input for the simulator run destination or use a physical device.")
@@ -790,7 +815,7 @@ final class SpeechTranscriptionController {
     private func configureAudioSessionIfNeeded() throws {
         #if os(iOS) || os(tvOS) || os(visionOS)
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP])
         try session.setActive(true)
         #endif
     }

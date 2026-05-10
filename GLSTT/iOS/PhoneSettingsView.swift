@@ -19,6 +19,18 @@ struct PhoneSettingsView: View {
                 }
             }
 
+            Section("Live Activity") {
+                Toggle("Show dictation on Lock Screen and Dynamic Island", isOn: $appModel.dictationLiveActivityEnabled)
+
+                Text(appModel.liveActivityAvailabilitySummary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Text("When enabled, GLSTT keeps the microphone session active in the background and updates the Live Activity while dictation is running.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Vocabulary Bias") {
                 Text("Active for this draft")
                     .font(.caption)

@@ -29,8 +29,9 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        updateStatusPanelFrame()
-        statusPanel.orderFrontRegardless()
+        if updateStatusPanelFrame() {
+            statusPanel.orderFrontRegardless()
+        }
         updateMessagePanelVisibility()
     }
 
@@ -88,17 +89,19 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         panel.animationBehavior = .utilityWindow
     }
 
-    private func updateStatusPanelFrame() {
-        guard let model else { return }
+    private func updateStatusPanelFrame() -> Bool {
+        guard let model else { return false }
         let desiredSize = model.hudStatusPanelSize
         guard desiredSize != .zero else {
             hide()
-            return
+            return false
         }
-        statusPanel.hasShadow = model.hudDisplayMode != .compact
+        statusPanel.hasShadow = model.hudDisplayMode == .transcript
+        statusPanel.ignoresMouseEvents = model.hudDisplayMode == .menuBar
+        statusPanel.isMovableByWindowBackground = model.hudDisplayMode != .menuBar
 
         let screen = NSScreen.main ?? NSScreen.screens.first
-        guard let screen else { return }
+        guard let screen else { return false }
 
         let savedOrigin = savedStatusOrigin(for: model.hudDisplayMode)
         let origin = clamp(
@@ -108,14 +111,16 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         )
         let frame = NSRect(origin: origin, size: desiredSize)
 
-        guard statusPanel.frame != frame else { return }
+        guard statusPanel.frame != frame else { return true }
         isApplyingSavedFrame = true
         statusPanel.setFrame(frame, display: true)
         isApplyingSavedFrame = false
+        return true
     }
 
     private func updateMessagePanelVisibility() {
         guard let model,
+              model.hudDisplayMode != .menuBar,
               case .message = model.hudMode
         else {
             messagePanel.orderOut(nil)
@@ -147,8 +152,14 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         on screen: NSScreen,
         displayMode: AppModel.HUDDisplayMode
     ) -> CGPoint {
-        let visibleFrame = screen.visibleFrame
+        if displayMode == .menuBar {
+            return CGPoint(
+                x: screen.frame.midX - (size.width / 2),
+                y: screen.frame.maxY - size.height
+            )
+        }
 
+        let visibleFrame = screen.visibleFrame
         if displayMode == .compact {
             return CGPoint(
                 x: visibleFrame.midX - (size.width / 2),
@@ -163,6 +174,8 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
     }
 
     private func savedStatusOrigin(for displayMode: AppModel.HUDDisplayMode) -> CGPoint? {
+        guard displayMode != .menuBar else { return nil }
+
         let defaults = UserDefaults.standard
         let keys = originKeys(for: displayMode)
         guard defaults.object(forKey: keys.x) != nil,
@@ -202,16 +215,53 @@ private struct HUDView: View {
     var body: some View {
         if model.hudDisplayMode == .compact {
             compactBody
+        } else if model.hudDisplayMode == .menuBar {
+            menuBarTopBody
         } else {
             transcriptBody
         }
     }
 
     private var compactBody: some View {
-        CompactWaveBadge(level: statusAudioLevel, tint: statusAccentColor)
+        CompactWaveBadge(level: statusAudioLevel, tint: statusAccentColor, isActive: statusIsAudioActive)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Circle())
             .background(backgroundShape)
+    }
+
+    private var menuBarTopBody: some View {
+        HStack(spacing: 7) {
+            if case .message = model.hudMode {
+                Image(systemName: statusMessageIconName)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(statusAccentColor)
+                    .frame(width: 16, height: 16)
+                    .background(
+                        Circle()
+                            .fill(statusAccentColor.opacity(0.16))
+                    )
+
+                Text(statusMessage)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                MacAudioLevelMeter(
+                    level: statusAudioLevel,
+                    tint: statusAccentColor,
+                    isActive: statusIsAudioActive,
+                    style: .menuBar
+                )
+                .frame(width: 23, height: 19)
+            }
+        }
+        .padding(.horizontal, menuBarHorizontalPadding)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(backgroundShape)
     }
 
     private var transcriptBody: some View {
@@ -227,7 +277,7 @@ private struct HUDView: View {
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                InlineWaveGlyph(level: statusAudioLevel, tint: statusAccentColor)
+                InlineWaveGlyph(level: statusAudioLevel, tint: statusAccentColor, isActive: statusIsAudioActive)
 
                 Spacer()
 
@@ -284,6 +334,15 @@ private struct HUDView: View {
         if model.hudDisplayMode == .compact {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(Color.clear)
+        } else if model.hudDisplayMode == .menuBar {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 15,
+                bottomTrailingRadius: 15,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(Color.black.opacity(0.88))
         } else {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -311,7 +370,9 @@ private struct HUDView: View {
             return model.hudMessage
         case .finalizing:
             return model.hudMessage
-        case .hidden, .message:
+        case .message:
+            return model.hudMessage
+        case .hidden:
             return "Hold \(model.holdTriggerKey.shortTitle) to start dictation."
         }
     }
@@ -322,9 +383,21 @@ private struct HUDView: View {
             return .green
         case .finalizing:
             return .orange
-        case .hidden, .message:
+        case .message(_, let isError):
+            return isError ? .orange : .green
+        case .hidden:
             return .secondary
         }
+    }
+
+    private var menuBarHorizontalPadding: CGFloat {
+        if case .message = model.hudMode { return 10 }
+        return 12
+    }
+
+    private var statusMessageIconName: String {
+        guard case .message(_, let isError) = model.hudMode else { return "waveform" }
+        return isError ? "exclamationmark" : "checkmark"
     }
 
     private var statusAudioLevel: Double {
@@ -339,6 +412,15 @@ private struct HUDView: View {
     private var statusIsSpinning: Bool {
         if case .finalizing = model.hudMode { return true }
         return false
+    }
+
+    private var statusIsAudioActive: Bool {
+        switch model.hudMode {
+        case .recording, .finalizing:
+            return true
+        case .hidden, .message:
+            return false
+        }
     }
 
     private var statusShowsTranscript: Bool {
@@ -446,23 +528,23 @@ private struct HUDMessageView: View {
 private struct InlineWaveGlyph: View {
     let level: Double
     let tint: Color
+    let isActive: Bool
 
     var body: some View {
-        CenterOutLevelMeter(
+        MacAudioLevelMeter(
             level: level,
             tint: tint,
-            barCount: 11,
-            barSize: CGSize(width: 6, height: 16),
-            spacing: 4
+            isActive: isActive,
+            style: .inline
         )
         .frame(width: 110, height: 24)
-        .animation(.easeOut(duration: 0.06), value: level)
     }
 }
 
 private struct CompactWaveBadge: View {
     let level: Double
     let tint: Color
+    let isActive: Bool
 
     var body: some View {
         ZStack {
@@ -470,61 +552,14 @@ private struct CompactWaveBadge: View {
                 .fill(Color.clear)
                 .frame(width: 52, height: 52)
 
-            CenterOutLevelMeter(
+            MacAudioLevelMeter(
                 level: level,
                 tint: tint,
-                barCount: 5,
-                barSize: CGSize(width: 4, height: 22),
-                spacing: 4
+                isActive: isActive,
+                style: .compactBadge
             )
             .frame(width: 36, height: 30)
         }
-        .animation(.easeOut(duration: 0.06), value: level)
-    }
-}
-
-private struct CenterOutLevelMeter: View {
-    let level: Double
-    let tint: Color
-    let barCount: Int
-    let barSize: CGSize
-    let spacing: CGFloat
-
-    private var centerIndex: Int {
-        barCount / 2
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: spacing) {
-            ForEach(0..<barCount, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(fill(for: index))
-                    .frame(width: barSize.width, height: barSize.height)
-                    .scaleEffect(x: 1, y: scale(for: index), anchor: .center)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func fill(for index: Int) -> Color {
-        let activation = activation(for: index)
-        let baseOpacity = 0.14 + (0.7 * activation)
-        return tint.opacity(baseOpacity)
-    }
-
-    private func scale(for index: Int) -> CGFloat {
-        let activation = activation(for: index)
-        return 0.3 + (0.7 * activation)
-    }
-
-    private func activation(for index: Int) -> Double {
-        let distance = abs(index - centerIndex)
-        let normalizedDistance = centerIndex == 0 ? 0 : Double(distance) / Double(centerIndex)
-        let boostedLevel = max(0.08, pow(level, 0.75))
-        let leadingEdge = boostedLevel * 1.12
-        let falloff = max(0, 1 - (normalizedDistance / max(leadingEdge, 0.18)))
-        let highlight = max(0, 1 - normalizedDistance * 1.35)
-        return min(1, max(falloff, boostedLevel * highlight))
     }
 }
 #endif

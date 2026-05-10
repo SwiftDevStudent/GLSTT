@@ -12,6 +12,9 @@ final class AppModel {
     private static let onboardingDismissedKey = "glstt.permissions.onboarding.dismissed"
     private static let launchAtLoginPromptedKey = "glstt.settings.launchAtLogin.prompted"
     private static let hudDisplayModeKey = "glstt.settings.hudDisplayMode"
+    private static let showMenuBarInformationalMessagesKey = "glstt.settings.menuBarMessages.informational"
+    private static let showMenuBarInsertionMessagesKey = "glstt.settings.menuBarMessages.insertion"
+    private static let showMenuBarImportantMessagesKey = "glstt.settings.menuBarMessages.important"
     private static let holdTriggerKeyKey = "glstt.settings.holdTriggerKey"
     private static let toggleTriggerKeyKey = "glstt.settings.toggleTriggerKey"
     private static let toggleDoublePressKey = "glstt.settings.toggleDoublePress"
@@ -34,6 +37,7 @@ final class AppModel {
     enum HUDDisplayMode: String, CaseIterable, Identifiable {
         case off
         case compact
+        case menuBar
         case transcript
 
         var id: Self { self }
@@ -44,10 +48,18 @@ final class AppModel {
                 return "Off"
             case .compact:
                 return "Compact"
+            case .menuBar:
+                return "Menu Bar"
             case .transcript:
                 return "Transcript"
             }
         }
+    }
+
+    enum HUDMessageKind {
+        case informational
+        case insertion
+        case important
     }
 
     private(set) var permissions = AppPermissionsState.current()
@@ -72,11 +84,11 @@ final class AppModel {
             do {
                 try loginItemController.setEnabled(launchAtLoginEnabled)
                 if loginItemController.state == .requiresApproval {
-                    showMessage("Approve GLSTT in Login Items to finish enabling launch at login.", isError: false)
+                    showMessage("Approve GLSTT in Login Items to finish enabling launch at login.", isError: false, kind: .important)
                 }
             } catch {
                 launchAtLoginEnabled = oldValue
-                showMessage("Unable to change launch-at-login right now.", isError: true, autoHide: false)
+                showMessage("Unable to change launch-at-login right now.", isError: true, kind: .important, autoHide: false)
             }
         }
     }
@@ -85,6 +97,24 @@ final class AppModel {
             guard !previewMode else { return }
             defaults.set(hudDisplayMode.rawValue, forKey: Self.hudDisplayModeKey)
             syncHUDVisibility()
+        }
+    }
+    var showMenuBarInformationalMessages = false {
+        didSet {
+            guard !previewMode else { return }
+            defaults.set(showMenuBarInformationalMessages, forKey: Self.showMenuBarInformationalMessagesKey)
+        }
+    }
+    var showMenuBarInsertionMessages = true {
+        didSet {
+            guard !previewMode else { return }
+            defaults.set(showMenuBarInsertionMessages, forKey: Self.showMenuBarInsertionMessagesKey)
+        }
+    }
+    var showMenuBarImportantMessages = true {
+        didSet {
+            guard !previewMode else { return }
+            defaults.set(showMenuBarImportantMessages, forKey: Self.showMenuBarImportantMessagesKey)
         }
     }
     var holdTriggerKey: TriggerKey = .rightOption {
@@ -201,6 +231,15 @@ final class AppModel {
         self.hudDisplayMode = previewMode
             ? .compact
             : HUDDisplayMode(rawValue: defaults.string(forKey: Self.hudDisplayModeKey) ?? "") ?? .compact
+        self.showMenuBarInformationalMessages = previewMode
+            ? true
+            : defaults.object(forKey: Self.showMenuBarInformationalMessagesKey) as? Bool ?? false
+        self.showMenuBarInsertionMessages = previewMode
+            ? true
+            : defaults.object(forKey: Self.showMenuBarInsertionMessagesKey) as? Bool ?? true
+        self.showMenuBarImportantMessages = previewMode
+            ? true
+            : defaults.object(forKey: Self.showMenuBarImportantMessagesKey) as? Bool ?? true
         self.holdTriggerKey = previewMode
             ? .rightOption
             : {
@@ -300,6 +339,48 @@ final class AppModel {
         return permissions.accessibilityTrusted ? "waveform.badge.mic" : "exclamationmark.magnifyingglass"
     }
 
+    var usesMenuBarLevelMeter: Bool {
+        hudDisplayMode == .menuBar
+    }
+
+    var isMenuBarLevelMeterActive: Bool {
+        switch hudMode {
+        case .recording, .finalizing:
+            return true
+        case .hidden, .message:
+            return false
+        }
+    }
+
+    var isMenuBarStatusPanelVisible: Bool {
+        guard hudDisplayMode == .menuBar else { return false }
+
+        switch hudMode {
+        case .recording, .finalizing, .message:
+            return true
+        case .hidden:
+            return false
+        }
+    }
+
+    var isFinalizingStatus: Bool {
+        if case .finalizing = hudMode { return true }
+        return false
+    }
+
+    var menuBarLevelMeterLevel: Double {
+        guard isMenuBarLevelMeterActive else { return 0 }
+
+        switch hudMode {
+        case .recording:
+            return min(1, max(0.12, audioLevel))
+        case .finalizing:
+            return 0.65
+        case .hidden, .message:
+            return 0
+        }
+    }
+
     var statusSummary: String {
         switch hudMode {
         case .hidden:
@@ -334,6 +415,19 @@ final class AppModel {
 
     var launchAtLoginBadgeTitle: String {
         launchAtLoginEnabled ? "Launch at Login" : "Manual Launch"
+    }
+
+    var hudDisplayModeSummary: String {
+        switch hudDisplayMode {
+        case .off:
+            return "No floating status indicator."
+        case .compact:
+            return "Shows a small floating waveform only while dictation is active."
+        case .menuBar:
+            return "Shows the active waveform in the menu bar instead of a floating indicator."
+        case .transcript:
+            return "Shows a floating live transcript while dictation is active."
+        }
     }
 
     var holdTriggerSummary: String {
@@ -451,6 +545,8 @@ final class AppModel {
         switch hudDisplayMode {
         case .off:
             return .zero
+        case .menuBar:
+            return menuBarStatusPanelSize
         case .compact:
             switch hudMode {
             case .hidden:
@@ -478,6 +574,8 @@ final class AppModel {
         switch hudDisplayMode {
         case .off:
             return .zero
+        case .menuBar:
+            return menuBarStatusPanelSize
         case .compact:
             return CGSize(width: 68, height: 68)
         case .transcript:
@@ -487,6 +585,17 @@ final class AppModel {
 
     var shouldPresentOnboarding: Bool {
         !defaults.bool(forKey: Self.onboardingDismissedKey)
+    }
+
+    private var menuBarStatusPanelSize: CGSize {
+        guard isMenuBarStatusPanelVisible else { return .zero }
+
+        if case .message(let message, _) = hudMode {
+            let width = min(260, max(150, 54 + (CGFloat(message.count) * 6.2)))
+            return CGSize(width: width, height: 38)
+        }
+
+        return CGSize(width: 56, height: 34)
     }
 
     var showsTranscriptHUD: Bool {
@@ -536,7 +645,7 @@ final class AppModel {
         let options = [promptKey: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
         refreshPermissions()
-        showMessage("Accessibility permission is needed for the global hotkey and cross-app insertion.", isError: !permissions.accessibilityTrusted, autoHide: false)
+        showMessage("Accessibility permission is needed for the global hotkey and cross-app insertion.", isError: !permissions.accessibilityTrusted, kind: .important, autoHide: false)
     }
 
     func openAccessibilitySettings() {
@@ -564,7 +673,7 @@ final class AppModel {
     func requestSpeechAndMicrophoneAccess() async {
         await speechController.requestSpeechAndMicrophoneAccess()
         refreshPermissions()
-        showMessage("Speech and microphone permissions were refreshed.", isError: false)
+        showMessage("Speech and microphone permissions were refreshed.", isError: false, kind: .informational)
     }
 
     func copyLastTranscript() {
@@ -579,7 +688,7 @@ final class AppModel {
         guard !text.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        showMessage("Copied transcript.", isError: false)
+        showMessage("Copied transcript.", isError: false, kind: .informational)
     }
 
     func showTranscriptWindow() {
@@ -629,7 +738,7 @@ final class AppModel {
 
     func transcribeSavedRecording(_ recording: SavedAudioRecording) {
         guard let url = urlForSavedRecording(recording) else {
-            showMessage("Recording file is missing.", isError: true)
+            showMessage("Recording file is missing.", isError: true, kind: .important)
             savedAudioRecordings.removeAll { $0.id == recording.id }
             persistSavedAudioRecordings()
             return
@@ -640,7 +749,7 @@ final class AppModel {
 
     func deleteSavedRecording(_ recording: SavedAudioRecording) {
         guard !isFileRecording else {
-            showMessage("Stop recording before deleting saved files.", isError: true)
+            showMessage("Stop recording before deleting saved files.", isError: true, kind: .important)
             return
         }
 
@@ -688,7 +797,7 @@ final class AppModel {
     func confirmPendingAudioFileLanguageSelection(languageID: String) {
         guard let pendingAudioFileLanguageSelection else { return }
         guard let language = pendingAudioFileLanguageSelection.languageOptions.first(where: { $0.id == languageID }) else {
-            showMessage("Choose a supported Apple speech language for that audio file.", isError: true, autoHide: false)
+            showMessage("Choose a supported Apple speech language for that audio file.", isError: true, kind: .important, autoHide: false)
             return
         }
 
@@ -704,7 +813,7 @@ final class AppModel {
 
     private func requestAudioFileLanguageSelection(for files: [PendingAudioFileLanguageSelection.File]) async {
         guard !speechController.isRecording else {
-            showMessage("Stop dictation before queueing audio files.", isError: true)
+            showMessage("Stop dictation before queueing audio files.", isError: true, kind: .important)
             return
         }
 
@@ -712,7 +821,7 @@ final class AppModel {
 
         let languageOptions = await AudioTranscriptionLanguageOption.supportedOptions()
         guard let defaultLanguageID = AudioTranscriptionLanguageOption.defaultLanguageID(in: languageOptions) else {
-            showMessage("Apple did not report any supported file transcription languages on this device.", isError: true, autoHide: false)
+            showMessage("Apple did not report any supported file transcription languages on this device.", isError: true, kind: .important, autoHide: false)
             return
         }
 
@@ -772,8 +881,13 @@ final class AppModel {
                 runtimeWords: inserter.contextualVocabularyCandidates(limit: 40)
             )
             : []
-        hudMode = .message("Requesting permissions and preparing Apple's on-device speech models…", isError: false)
-        syncHUDVisibility()
+        if shouldPresentMessage(kind: .informational) {
+            hudMode = .message("Requesting permissions and preparing Apple's on-device speech models…", isError: false)
+            syncHUDVisibility()
+        } else {
+            hudMode = .hidden
+            syncHUDVisibility()
+        }
 
         do {
             try await speechController.beginSession(contextualStrings: contextualStrings)
@@ -785,7 +899,7 @@ final class AppModel {
             liveInsertionSession = nil
             insertionTarget = nil
             hotkeyMonitor.resetState()
-            showMessage(error.localizedDescription, isError: true)
+            showMessage(error.localizedDescription, isError: true, kind: .important)
         }
     }
 
@@ -794,18 +908,18 @@ final class AppModel {
         refreshPermissions()
 
         guard !speechController.isRecording else {
-            showMessage("Stop dictation first.", isError: true)
+            showMessage("Stop dictation first.", isError: true, kind: .important)
             return
         }
 
         guard !isAudioFileTranscriptionActive else {
-            showMessage("Finish the current transcription first.", isError: true)
+            showMessage("Finish the current transcription first.", isError: true, kind: .important)
             return
         }
 
         guard await speechController.requestMicrophoneAccess() else {
             refreshPermissions()
-            showMessage("Microphone access is needed.", isError: true)
+            showMessage("Microphone access is needed.", isError: true, kind: .important)
             return
         }
 
@@ -837,7 +951,7 @@ final class AppModel {
             fileRecordingElapsedSeconds = 0
             audioLevel = 0
             isFileRecording = false
-            showMessage(error.localizedDescription, isError: true)
+            showMessage(error.localizedDescription, isError: true, kind: .important)
         }
     }
 
@@ -988,9 +1102,9 @@ final class AppModel {
         refreshPermissions()
 
         if hadSession {
-            showMessage("Stopped current session.", isError: false)
+            showMessage("Stopped current session.", isError: false, kind: .informational)
         } else {
-            showMessage("No active session to stop.", isError: false)
+            showMessage("No active session to stop.", isError: false, kind: .informational)
         }
     }
 
@@ -1102,7 +1216,7 @@ final class AppModel {
             guard !text.isEmpty else {
                 liveInsertionSession = nil
                 insertionTarget = nil
-                showMessage("No speech captured.", isError: true)
+                showMessage("No speech captured.", isError: false, kind: .informational)
                 return
             }
 
@@ -1133,7 +1247,7 @@ final class AppModel {
 
             guard finalInsertionEnabled else {
                 insertionTarget = nil
-                showMessage("Captured transcript without automatic insertion.", isError: false)
+                showMessage("Captured transcript without automatic insertion.", isError: false, kind: .insertion)
                 return
             }
 
@@ -1168,7 +1282,7 @@ final class AppModel {
             liveInsertionSession = nil
             insertionTarget = nil
             audioLevel = 0
-            showMessage(error.localizedDescription, isError: true)
+            showMessage(error.localizedDescription, isError: true, kind: .important)
         }
     }
 
@@ -1218,7 +1332,7 @@ final class AppModel {
             showHomeWindow()
         }
 
-        showMessage(shortInsertionMessage(for: message), isError: true, autoHideDelay: .milliseconds(1600))
+        showMessage(shortInsertionMessage(for: message), isError: true, kind: .insertion, autoHideDelay: .milliseconds(1600))
     }
 
     private func shortInsertionMessage(for message: String) -> String {
@@ -1242,7 +1356,20 @@ final class AppModel {
         return "Not inserted"
     }
 
-    private func showMessage(_ message: String, isError: Bool, autoHide: Bool = true, autoHideDelay: Duration = .seconds(2.8)) {
+    private func showMessage(
+        _ message: String,
+        isError: Bool,
+        kind: HUDMessageKind? = nil,
+        autoHide: Bool = true,
+        autoHideDelay: Duration = .seconds(2.8)
+    ) {
+        let resolvedKind = kind ?? (isError ? .important : .informational)
+        guard shouldPresentMessage(kind: resolvedKind) else {
+            hudMode = .hidden
+            syncHUDVisibility()
+            return
+        }
+
         hudMode = .message(message, isError: isError)
         syncHUDVisibility()
 
@@ -1257,14 +1384,39 @@ final class AppModel {
         }
     }
 
+    private func shouldPresentMessage(kind: HUDMessageKind) -> Bool {
+        guard hudDisplayMode == .menuBar else { return true }
+
+        switch kind {
+        case .informational:
+            return showMenuBarInformationalMessages
+        case .insertion:
+            return showMenuBarInsertionMessages
+        case .important:
+            return showMenuBarImportantMessages
+        }
+    }
+
     private func syncHUDVisibility() {
         guard !previewMode else { return }
-        guard hudDisplayMode != .off else {
+        switch hudDisplayMode {
+        case .off:
             hudPanelController?.hide()
-            return
+        case .menuBar:
+            if isMenuBarStatusPanelVisible {
+                hudPanelController?.show()
+            } else {
+                hudPanelController?.hide()
+            }
+        case .compact:
+            if case .hidden = hudMode {
+                hudPanelController?.hide()
+            } else {
+                hudPanelController?.show()
+            }
+        case .transcript:
+            hudPanelController?.show()
         }
-
-        hudPanelController?.show()
     }
 
     private func markOnboardingDismissed() {
@@ -1307,7 +1459,7 @@ final class AppModel {
         guard !launchAtLoginEnabled else { return }
 
         defaults.set(true, forKey: Self.launchAtLoginPromptedKey)
-        showMessage("Setup looks good. You can turn on launch at login in Settings whenever you want.", isError: false)
+        showMessage("Setup looks good. You can turn on launch at login in Settings whenever you want.", isError: false, kind: .informational)
     }
 
     private var hotkeyConfiguration: HotkeyConfiguration {
@@ -1364,10 +1516,10 @@ final class AppModel {
             importedVocabulary = try vocabularyStore.importingList(from: url, into: importedVocabulary)
             vocabularyStore.save(importedVocabulary)
             if let list = importedVocabulary.lists.first {
-                showMessage("Imported \(list.words.count) words from \(list.name).", isError: false)
+                showMessage("Imported \(list.words.count) words from \(list.name).", isError: false, kind: .informational)
             }
         } catch {
-            showMessage(error.localizedDescription, isError: true, autoHide: false)
+            showMessage(error.localizedDescription, isError: true, kind: .important, autoHide: false)
         }
     }
 

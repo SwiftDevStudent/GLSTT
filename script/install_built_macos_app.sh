@@ -5,18 +5,18 @@ APP_NAME="GLSTT.app"
 INSTALL_DIR="${GLSTT_INSTALL_DIR:-/Applications}"
 INSTALLED_APP="$INSTALL_DIR/$APP_NAME"
 
-if [[ "${ACTION:-build}" != "build" ]]; then
-    echo "Skipping GLSTT install for ACTION=${ACTION:-unset}"
+if [[ -n "${ACTION:-}" && "${ACTION:-}" != "build" ]]; then
+    echo "Skipping GLSTT install for ACTION=$ACTION"
     exit 0
 fi
 
-if [[ "${PLATFORM_NAME:-}" != "macosx" ]]; then
-    echo "Skipping GLSTT install for PLATFORM_NAME=${PLATFORM_NAME:-unset}"
+if [[ -n "${PLATFORM_NAME:-}" && "${PLATFORM_NAME:-}" != "macosx" ]]; then
+    echo "Skipping GLSTT install for PLATFORM_NAME=$PLATFORM_NAME"
     exit 0
 fi
 
-if [[ "${WRAPPER_NAME:-}" != "$APP_NAME" ]]; then
-    echo "Skipping GLSTT install for WRAPPER_NAME=${WRAPPER_NAME:-unset}"
+if [[ -n "${WRAPPER_NAME:-}" && "${WRAPPER_NAME:-}" != "$APP_NAME" ]]; then
+    echo "Skipping GLSTT install for WRAPPER_NAME=$WRAPPER_NAME"
     exit 0
 fi
 

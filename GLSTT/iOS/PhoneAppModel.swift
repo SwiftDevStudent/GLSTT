@@ -10,6 +10,7 @@ import UIKit
 @Observable
 final class PhoneAppModel {
     private static let livePreviewKey = "glstt.ios.livePreview"
+    private static let dictationLiveActivityKey = "glstt.ios.dictationLiveActivity"
     private static let importedVocabularyListsKey = "glstt.ios.importedVocabularyLists"
     private static let savedAudioRecordingsKey = "glstt.ios.savedAudioRecordings"
     private static let transcriptDatabaseName = "phone-transcripts.sqlite"
@@ -35,6 +36,16 @@ final class PhoneAppModel {
             defaults.set(livePreviewEnabled, forKey: Self.livePreviewKey)
         }
     }
+    var dictationLiveActivityEnabled = false {
+        didSet {
+            defaults.set(dictationLiveActivityEnabled, forKey: Self.dictationLiveActivityKey)
+            if !dictationLiveActivityEnabled {
+                Task { [liveActivityController] in
+                    await liveActivityController.endImmediately()
+                }
+            }
+        }
+    }
 
     let speechController = SpeechTranscriptionController()
 
@@ -47,11 +58,13 @@ final class PhoneAppModel {
     @ObservationIgnored private var audioRecorder: AVAudioRecorder?
     @ObservationIgnored private var fileRecordingStartedAt: Date?
     @ObservationIgnored private var fileRecordingTimerTask: Task<Void, Never>?
+    @ObservationIgnored private let liveActivityController = PhoneDictationLiveActivityController()
 
     init() {
         vocabularyStore = ImportedVocabularyStore(storageKey: Self.importedVocabularyListsKey)
         transcriptStore = TranscriptHistoryStore(filename: Self.transcriptDatabaseName)
         livePreviewEnabled = defaults.object(forKey: Self.livePreviewKey) as? Bool ?? true
+        dictationLiveActivityEnabled = defaults.object(forKey: Self.dictationLiveActivityKey) as? Bool ?? false
         importedVocabulary = vocabularyStore.load()
         transcriptHistory = transcriptStore.loadEntries()
         savedAudioRecordings = loadSavedAudioRecordings()
@@ -63,10 +76,29 @@ final class PhoneAppModel {
             if self.livePreviewEnabled, self.speechController.isRecording {
                 self.applyLivePreview(transcript.combinedText)
             }
+            if self.speechController.isRecording {
+                Task { @MainActor in
+                    await self.liveActivityController.update(
+                        status: .listening,
+                        transcript: transcript.combinedText,
+                        audioLevel: self.audioLevel
+                    )
+                }
+            }
         }
 
         speechController.onAudioLevelUpdate = { [weak self] level in
-            self?.audioLevel = level
+            guard let self else { return }
+            self.audioLevel = level
+            if self.speechController.isRecording {
+                Task { @MainActor in
+                    await self.liveActivityController.update(
+                        status: .listening,
+                        transcript: self.finalizedTranscript + self.volatileTranscript,
+                        audioLevel: level
+                    )
+                }
+            }
         }
     }
 
@@ -125,6 +157,10 @@ final class PhoneAppModel {
             return permissions.microphoneSummary
         }
         return "Speech recognition and microphone access are ready."
+    }
+
+    var liveActivityAvailabilitySummary: String {
+        liveActivityController.availabilitySummary
     }
 
     func refreshPermissions() {
@@ -368,6 +404,7 @@ final class PhoneAppModel {
                     runtimeWords: selectedBuiltInPacks.flatMap(\.words)
                 )
             )
+            await liveActivityController.startIfNeeded(isEnabled: dictationLiveActivityEnabled)
             refreshPermissions()
         } catch {
             refreshPermissions()
@@ -549,6 +586,12 @@ final class PhoneAppModel {
         guard speechController.isRecording else { return }
 
         do {
+            await liveActivityController.update(
+                status: .finalizing,
+                transcript: finalizedTranscript + volatileTranscript,
+                audioLevel: audioLevel,
+                force: true
+            )
             let text = try await speechController.finishSession()
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             finalizedTranscript = trimmed
@@ -558,15 +601,18 @@ final class PhoneAppModel {
             guard !trimmed.isEmpty else {
                 draftText = sessionBaseText
                 alertMessage = "No speech captured."
+                await liveActivityController.end(status: .failed, transcript: "", message: "No speech captured.")
                 return
             }
 
             draftText = mergedText(base: sessionBaseText, transcript: trimmed)
             lastTranscript = trimmed
             appendHistory(trimmed)
+            await liveActivityController.end(status: .finished, transcript: trimmed)
         } catch {
             audioLevel = 0
             alertMessage = error.localizedDescription
+            await liveActivityController.end(status: .failed, transcript: "", message: error.localizedDescription)
         }
     }
 

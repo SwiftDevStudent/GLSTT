@@ -12,7 +12,7 @@ struct SettingsView: View {
         @Bindable var appModel = appModel
 
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
                 header
 
                 SettingsCard("General") {
@@ -22,7 +22,43 @@ struct SettingsView: View {
                             subtitle: appModel.loginItemSummary,
                             isOn: $appModel.launchAtLoginEnabled
                         )
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Status display")
+                                        .font(.system(.headline, design: .rounded, weight: .semibold))
+
+                                    Text(appModel.hudDisplayModeSummary)
+                                        .font(.system(.caption, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer(minLength: 12)
+                            }
+
+                            Picker("Status display", selection: $appModel.hudDisplayMode) {
+                                ForEach(AppModel.HUDDisplayMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                        }
                     }
+                }
+
+                SettingsCard("Menu Bar Messages") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Controls what the top drop-down shows when Status Display is set to Menu Bar. The idle ready/setup messages are hidden by default so the waveform is the first thing you see when listening starts.")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Show setup and ready messages", isOn: $appModel.showMenuBarInformationalMessages)
+                        Toggle("Show insertion and clipboard messages", isOn: $appModel.showMenuBarInsertionMessages)
+                        Toggle("Show important errors", isOn: $appModel.showMenuBarImportantMessages)
+                    }
+                    .toggleStyle(.switch)
                 }
 
                 SettingsCard("Triggers") {
@@ -183,10 +219,10 @@ struct SettingsView: View {
                     SoftwareUpdateSectionView()
                 }
             }
-            .padding(24)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(width: 700, height: 620)
+        .frame(width: 560, height: 620)
         .sheet(item: $captureTarget) { target in
             ShortcutCaptureSheet(
                 target: target,
@@ -216,18 +252,18 @@ struct SettingsView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 12) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(width: 32, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("GLSTT Settings")
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .font(.system(.title2, design: .rounded, weight: .bold))
 
                 Text(appModel.triggerSummary)
-                    .font(.system(.body, design: .rounded))
+                    .font(.system(.caption, design: .rounded))
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
@@ -237,6 +273,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .padding(.bottom, 2)
     }
 
     private func permissionStatus(isGranted: Bool, missingLabel: String) -> PermissionVisualStatus {
@@ -282,17 +319,17 @@ private struct TriggerCaptureRow: View {
     let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text(title)
-                .font(.system(.body, design: .rounded, weight: .semibold))
-                .frame(width: 58, alignment: .leading)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .frame(width: 52, alignment: .leading)
 
             Text(keyTitle)
-                .font(.system(.body, design: .rounded))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .font(.system(.subheadline, design: .rounded))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
                 .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Color(nsColor: .controlBackgroundColor))
                 )
 
@@ -314,19 +351,21 @@ private struct SettingsCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(.title3, design: .rounded, weight: .bold))
+                .font(.system(.caption, design: .rounded, weight: .bold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
 
             content
         }
-        .padding(18)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                 }
         )
@@ -339,10 +378,10 @@ private struct SettingsToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
 
                 Text(subtitle)
                     .font(.system(.caption, design: .rounded))
@@ -378,8 +417,8 @@ private struct StatusBadge: View {
         Text(title)
             .font(.system(.caption, design: .rounded, weight: .semibold))
             .foregroundStyle(tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(
                 Capsule(style: .continuous)
                     .fill(tint.opacity(0.14))
@@ -401,15 +440,15 @@ private struct PermissionSettingsRow: View {
     let openAction: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 10) {
             Image(systemName: status.symbolName)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(status.tint)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     StatusBadge(title: status.title, tint: status.tint)
                 }
 
