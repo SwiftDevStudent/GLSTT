@@ -24,6 +24,7 @@ final class AppModel {
     private static let importedVocabularyListsKey = "glstt.settings.importedVocabularyLists"
     private static let copyFailedInsertionsKey = "glstt.settings.copyFailedInsertions"
     private static let showTranscriptWindowOnFailureKey = "glstt.settings.showTranscriptWindowOnFailure"
+    private static let cursorTextFieldKey = "glstt.settings.cursorTextField"
     private static let savedAudioRecordingsKey = "glstt.macos.savedAudioRecordings"
     private static let transcriptDatabaseName = "mac-transcripts.sqlite"
 
@@ -75,6 +76,7 @@ final class AppModel {
     private(set) var savedAudioRecordings: [SavedAudioRecording] = []
     private(set) var isFileRecording = false
     private(set) var fileRecordingElapsedSeconds: TimeInterval = 0
+    private(set) var cursorTextFieldFinalTranscript = ""
     var launchAtLoginEnabled = false {
         didSet {
             guard !previewMode, !isSyncingLaunchAtLogin, launchAtLoginEnabled != oldValue else { return }
@@ -165,6 +167,13 @@ final class AppModel {
             defaults.set(showTranscriptWindowOnFailure, forKey: Self.showTranscriptWindowOnFailureKey)
         }
     }
+    var cursorTextFieldEnabled = false {
+        didSet {
+            guard !previewMode else { return }
+            defaults.set(cursorTextFieldEnabled, forKey: Self.cursorTextFieldKey)
+            syncCursorTextField()
+        }
+    }
 
     let speechController = SpeechTranscriptionController()
 
@@ -183,6 +192,8 @@ final class AppModel {
     private let transcriptStore: TranscriptHistoryStore
     @ObservationIgnored
     private var hudPanelController: HUDPanelController?
+    @ObservationIgnored
+    private var cursorTextFieldController: CursorTextFieldPanelController?
     @ObservationIgnored
     private var onboardingWindowController: OnboardingWindowController?
     private var homeWindowController: HomeWindowController?
@@ -264,6 +275,7 @@ final class AppModel {
         self.savedAudioRecordings = previewMode ? [] : loadSavedAudioRecordings()
         self.copyFailedInsertionsToClipboard = previewMode ? true : defaults.object(forKey: Self.copyFailedInsertionsKey) as? Bool ?? true
         self.showTranscriptWindowOnFailure = previewMode ? false : defaults.object(forKey: Self.showTranscriptWindowOnFailureKey) as? Bool ?? false
+        self.cursorTextFieldEnabled = previewMode ? false : defaults.object(forKey: Self.cursorTextFieldKey) as? Bool ?? false
 
         speechController.onTranscriptUpdate = { [weak self] transcript in
             guard let self else { return }
@@ -275,6 +287,7 @@ final class AppModel {
                 }
             }
             self.syncHUDVisibility()
+            self.syncCursorTextField()
         }
         speechController.onAudioLevelUpdate = { [weak self] level in
             self?.audioLevel = level
@@ -296,6 +309,7 @@ final class AppModel {
 
         if !previewMode {
             hudPanelController = HUDPanelController(model: self)
+            cursorTextFieldController = CursorTextFieldPanelController(model: self)
             syncHotkeyPreferences(preferred: .toggle)
             hotkeyMonitor.start()
             installHotkeyRecoveryObservers()
@@ -602,6 +616,36 @@ final class AppModel {
         hudDisplayMode == .transcript
     }
 
+    var isCursorTextFieldVisible: Bool {
+        guard cursorTextFieldEnabled else { return false }
+        return speechController.isRecording || isFinalizingStatus || !cursorTextFieldFinalTranscript.isEmpty
+    }
+
+    var cursorTextFieldTitle: String {
+        if speechController.isRecording {
+            return "Listening"
+        }
+        if isFinalizingStatus {
+            return "Finalizing"
+        }
+        return "Transcript"
+    }
+
+    var cursorTextFieldText: String {
+        let liveText = (finalizedTranscript + volatileTranscript)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if speechController.isRecording || isFinalizingStatus {
+            return liveText.isEmpty ? "Speak now..." : liveText
+        }
+        return cursorTextFieldFinalTranscript
+    }
+
+    var cursorTextFieldShowsCopy: Bool {
+        !cursorTextFieldFinalTranscript.isEmpty
+            && !speechController.isRecording
+            && !isFinalizingStatus
+    }
+
     var isAccessibilityGranted: Bool {
         permissions.accessibilityTrusted
     }
@@ -689,6 +733,20 @@ final class AppModel {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         showMessage("Copied transcript.", isError: false, kind: .informational)
+    }
+
+    func copyCursorTextFieldTranscript() {
+        let text = cursorTextFieldFinalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        copyTranscript(text)
+        cursorTextFieldFinalTranscript = ""
+        syncCursorTextField()
+    }
+
+    func turnOffCursorTextField() {
+        cursorTextFieldEnabled = false
+        cursorTextFieldFinalTranscript = ""
+        syncCursorTextField()
     }
 
     func showTranscriptWindow() {
@@ -872,6 +930,7 @@ final class AppModel {
 
         finalizedTranscript = ""
         volatileTranscript = ""
+        cursorTextFieldFinalTranscript = ""
         audioLevel = 0
         insertionTarget = inserter.captureInsertionTarget()
         liveInsertionSession = liveInsertionEnabled ? inserter.beginLiveInsertionSession() : nil
@@ -894,10 +953,13 @@ final class AppModel {
             refreshPermissions()
             hudMode = .recording
             syncHUDVisibility()
+            syncCursorTextField()
         } catch {
             refreshPermissions()
             liveInsertionSession = nil
             insertionTarget = nil
+            cursorTextFieldFinalTranscript = ""
+            syncCursorTextField()
             hotkeyMonitor.resetState()
             showMessage(error.localizedDescription, isError: true, kind: .important)
         }
@@ -1212,10 +1274,14 @@ final class AppModel {
             volatileTranscript = ""
             lastTranscript = text
             audioLevel = 0
+            cursorTextFieldFinalTranscript = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            syncCursorTextField()
 
             guard !text.isEmpty else {
                 liveInsertionSession = nil
                 insertionTarget = nil
+                cursorTextFieldFinalTranscript = ""
+                syncCursorTextField()
                 showMessage("No speech captured.", isError: false, kind: .informational)
                 return
             }
@@ -1281,6 +1347,8 @@ final class AppModel {
         } catch {
             liveInsertionSession = nil
             insertionTarget = nil
+            cursorTextFieldFinalTranscript = ""
+            syncCursorTextField()
             audioLevel = 0
             showMessage(error.localizedDescription, isError: true, kind: .important)
         }
@@ -1290,12 +1358,14 @@ final class AppModel {
         hudDismissTask?.cancel()
         hudMode = .hidden
         syncHUDVisibility()
+        syncCursorTextField()
     }
 
     func dismissHUD() {
         hudDismissTask?.cancel()
         hudMode = .hidden
         syncHUDVisibility()
+        syncCursorTextField()
     }
 
     func openTranscriptWindowFromHUD() {
@@ -1328,7 +1398,7 @@ final class AppModel {
             NSPasteboard.general.setString(text, forType: .string)
         }
 
-        if showTranscriptWindowOnFailure {
+        if showTranscriptWindowOnFailure, !copyFailedInsertionsToClipboard {
             showHomeWindow()
         }
 
@@ -1372,6 +1442,7 @@ final class AppModel {
 
         hudMode = .message(message, isError: isError)
         syncHUDVisibility()
+        syncCursorTextField()
 
         guard autoHide else { return }
 
@@ -1381,6 +1452,7 @@ final class AppModel {
             guard !Task.isCancelled else { return }
             self?.hudMode = .hidden
             self?.syncHUDVisibility()
+            self?.syncCursorTextField()
         }
     }
 
@@ -1416,6 +1488,15 @@ final class AppModel {
             }
         case .transcript:
             hudPanelController?.show()
+        }
+    }
+
+    private func syncCursorTextField() {
+        guard !previewMode else { return }
+        if isCursorTextFieldVisible {
+            cursorTextFieldController?.show(followMouse: speechController.isRecording || isFinalizingStatus)
+        } else {
+            cursorTextFieldController?.hide()
         }
     }
 

@@ -365,8 +365,10 @@ private struct PhoneAudioFileTranscriptionJobSection<Content: View>: View {
 }
 
 private struct PhoneAudioFileTranscriptionJobRow: View {
+    @Environment(PhoneAppModel.self) private var appModel
     let job: AudioFileTranscriptionJob
     let openOutput: (URL) -> Void
+    @State private var outputMode: AudioFileOutputMode = .transcript
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -388,7 +390,7 @@ private struct PhoneAudioFileTranscriptionJobRow: View {
                 Spacer()
 
                 if let outputURL = job.outputURL {
-                    Button("Open Output") {
+                    Button("Open Text File") {
                         openOutput(outputURL)
                     }
                     .buttonStyle(.bordered)
@@ -396,24 +398,10 @@ private struct PhoneAudioFileTranscriptionJobRow: View {
                 }
             }
 
-            PhoneStreamingTranscriptText(text: job.statusMessage)
-
-            if !job.timedSegments.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Timestamps")
-                        .font(.footnote.weight(.semibold))
-                    ForEach(job.timedSegments.prefix(10)) { segment in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(segment.timeRangeLabel)
-                                .font(.caption.monospaced().weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 82, alignment: .leading)
-                            Text(segment.speaker.map { "\($0): \(segment.text)" } ?? segment.text)
-                                .font(.caption)
-                                .lineLimit(2)
-                        }
-                    }
-                }
+            if job.isComplete, !job.transcript.isEmpty {
+                completedOutput
+            } else {
+                PhoneStreamingTranscriptText(text: job.statusMessage)
             }
         }
         .padding(.vertical, 6)
@@ -431,6 +419,38 @@ private struct PhoneAudioFileTranscriptionJobRow: View {
             return .blue
         case .pending:
             return .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var completedOutput: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !job.timedSegments.isEmpty {
+                Picker("Output", selection: $outputMode) {
+                    ForEach(AudioFileOutputMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            switch outputMode {
+            case .transcript:
+                PhoneStreamingTranscriptText(text: job.transcript, maxHeight: 220)
+            case .timestamps:
+                PhoneTimestampedTranscriptList(segments: job.timedSegments, maxHeight: 220)
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    appModel.copyTranscript(job.transcript)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
     }
 }
@@ -500,6 +520,7 @@ private struct PhoneAudioFileLanguageSelectionSheet: View {
 
 private struct PhoneStreamingTranscriptText: View {
     let text: String
+    var maxHeight: CGFloat = 140
     private let bottomID = "phone-streaming-transcript-bottom"
 
     var body: some View {
@@ -517,7 +538,7 @@ private struct PhoneStreamingTranscriptText: View {
                         .id(bottomID)
                 }
             }
-            .frame(maxHeight: 140)
+            .frame(maxHeight: maxHeight)
             .onAppear {
                 scrollToBottom(proxy)
             }
@@ -531,6 +552,32 @@ private struct PhoneStreamingTranscriptText: View {
         withAnimation(.easeOut(duration: 0.16)) {
             proxy.scrollTo(bottomID, anchor: .bottom)
         }
+    }
+}
+
+private struct PhoneTimestampedTranscriptList: View {
+    let segments: [TimedTranscriptSegment]
+    let maxHeight: CGFloat
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(segments) { segment in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(segment.timeRangeLabel)
+                            .font(.caption.monospaced().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 82, alignment: .leading)
+                        Text(segment.speaker.map { "\($0): \(segment.text)" } ?? segment.text)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .frame(maxHeight: maxHeight)
     }
 }
 

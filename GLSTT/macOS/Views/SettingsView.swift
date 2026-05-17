@@ -103,6 +103,7 @@ struct SettingsView: View {
                         Toggle("Bias recognition with focused-field terms", isOn: $appModel.contextualVocabularyEnabled)
                         Toggle("Copy to clipboard if insertion is uncertain", isOn: $appModel.copyFailedInsertionsToClipboard)
                         Toggle("Open main window on failed insertion", isOn: $appModel.showTranscriptWindowOnFailure)
+                        Toggle("Show cursor text field while dictating", isOn: $appModel.cursorTextFieldEnabled)
                     }
                 }
 

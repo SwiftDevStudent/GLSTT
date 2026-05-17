@@ -63,6 +63,52 @@ struct TriggerKey: Hashable, Codable, Identifiable {
         isModifier || isFunctionKey
     }
 
+    var deviceModifierFlag: NSEvent.ModifierFlags? {
+        switch keyCode {
+        case 54:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERCMDKEYMASK))
+        case 55:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELCMDKEYMASK))
+        case 56:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELSHIFTKEYMASK))
+        case 58:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELALTKEYMASK))
+        case 59:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELCTLKEYMASK))
+        case 60:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERSHIFTKEYMASK))
+        case 61:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERALTKEYMASK))
+        case 62:
+            return NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERCTLKEYMASK))
+        default:
+            return nil
+        }
+    }
+
+    var modifierFamilyFlag: NSEvent.ModifierFlags? {
+        switch keyCode {
+        case 54, 55:
+            return .command
+        case 56, 60:
+            return .shift
+        case 58, 61:
+            return .option
+        case 59, 62:
+            return .control
+        default:
+            return nil
+        }
+    }
+
+    func isPressed(in modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        guard let deviceModifierFlag, let modifierFamilyFlag else { return false }
+        guard modifierFlags.rawValue & Self.deviceModifierFlagMask != 0 else {
+            return modifierFlags.contains(modifierFamilyFlag)
+        }
+        return modifierFlags.contains(deviceModifierFlag)
+    }
+
     static func from(keyCode: UInt16) -> Self {
         TriggerKey(keyCode: keyCode)
     }
@@ -127,6 +173,16 @@ struct TriggerKey: Hashable, Codable, Identifiable {
 
     private static let modifierKeyCodes: Set<UInt16> = [54, 55, 56, 58, 59, 60, 61, 62]
     private static let functionKeyCodes: Set<UInt16> = [96, 97, 98, 99, 100, 101, 103, 105, 107, 109, 111, 113, 118, 120, 122]
+    private static let deviceModifierFlagMask = UInt(
+        NX_DEVICELCMDKEYMASK
+            | NX_DEVICERCMDKEYMASK
+            | NX_DEVICELSHIFTKEYMASK
+            | NX_DEVICERSHIFTKEYMASK
+            | NX_DEVICELALTKEYMASK
+            | NX_DEVICERALTKEYMASK
+            | NX_DEVICELCTLKEYMASK
+            | NX_DEVICERCTLKEYMASK
+    )
 }
 
 struct HotkeyConfiguration: Equatable, Codable {
@@ -471,10 +527,14 @@ final class HotkeyMonitor {
             return
         }
 
-        if pressedKeys.contains(key) {
-            handlePhysicalKeyReleased(key)
-        } else {
+        if key.isPressed(in: event.modifierFlags) {
+            if pressedKeys.contains(key) {
+                pressedKeys.remove(key)
+                suppressedTriggerKeys.remove(key)
+            }
             handlePhysicalKeyPressed(key)
+        } else {
+            handlePhysicalKeyReleased(key)
         }
     }
 

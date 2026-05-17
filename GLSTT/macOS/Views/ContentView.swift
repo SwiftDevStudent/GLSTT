@@ -30,6 +30,9 @@ struct ContentView: View {
                 }
             }
 
+            Toggle("Cursor Text Field", isOn: cursorTextFieldBinding)
+                .toggleStyle(.switch)
+
             Divider()
 
             SettingsLink {
@@ -47,12 +50,20 @@ struct ContentView: View {
             appModel.refreshMenuBarState()
         }
     }
+
+    private var cursorTextFieldBinding: Binding<Bool> {
+        Binding(
+            get: { appModel.cursorTextFieldEnabled },
+            set: { appModel.cursorTextFieldEnabled = $0 }
+        )
+    }
 }
 
 struct MacAudioFileTranscriptionSections: View {
     let jobs: [AudioFileTranscriptionJob]
     let compact: Bool
     let openOutput: (AudioFileTranscriptionJob) -> Void
+    let copyOutput: (String) -> Void
 
     private var activeJobs: [AudioFileTranscriptionJob] {
         jobs.filter { !$0.isComplete }
@@ -69,6 +80,8 @@ struct MacAudioFileTranscriptionSections: View {
                     ForEach(activeJobs) { job in
                         MacAudioFileTranscriptionJobRow(job: job, compact: compact) {
                             openOutput(job)
+                        } copyOutput: { text in
+                            copyOutput(text)
                         }
                     }
                 }
@@ -79,6 +92,8 @@ struct MacAudioFileTranscriptionSections: View {
                     ForEach(completedJobs) { job in
                         MacAudioFileTranscriptionJobRow(job: job, compact: compact) {
                             openOutput(job)
+                        } copyOutput: { text in
+                            copyOutput(text)
                         }
                     }
                 }
@@ -114,6 +129,8 @@ struct MacAudioFileTranscriptionJobRow: View {
     let job: AudioFileTranscriptionJob
     let compact: Bool
     let openOutput: () -> Void
+    let copyOutput: (String) -> Void
+    @State private var outputMode: AudioFileOutputMode = .transcript
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -135,30 +152,16 @@ struct MacAudioFileTranscriptionJobRow: View {
                 Spacer(minLength: 8)
 
                 if job.outputURL != nil {
-                    Button("Open Output", action: openOutput)
+                    Button("Open Text File", action: openOutput)
                         .font(.system(.caption, design: .rounded, weight: .semibold))
                         .buttonStyle(.borderless)
                 }
             }
 
-            MacStreamingTranscriptText(text: job.statusMessage, maxHeight: compact ? 92 : 160)
-
-            if !job.timedSegments.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Timestamps")
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                    ForEach(job.timedSegments.prefix(compact ? 4 : 12)) { segment in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(segment.timeRangeLabel)
-                                .font(.system(.caption2, design: .monospaced, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 82, alignment: .leading)
-                            Text(segment.speaker.map { "\($0): \(segment.text)" } ?? segment.text)
-                                .font(.system(.caption2, design: .rounded))
-                                .lineLimit(2)
-                        }
-                    }
-                }
+            if job.isComplete, !job.transcript.isEmpty {
+                completedOutput
+            } else {
+                MacStreamingTranscriptText(text: job.statusMessage, maxHeight: compact ? 92 : 160)
             }
         }
         .padding(10)
@@ -167,6 +170,40 @@ struct MacAudioFileTranscriptionJobRow: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
         )
+    }
+
+    @ViewBuilder
+    private var completedOutput: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !job.timedSegments.isEmpty {
+                Picker("Output", selection: $outputMode) {
+                    ForEach(AudioFileOutputMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(maxWidth: compact ? 220 : 260)
+            }
+
+            switch outputMode {
+            case .transcript:
+                MacStreamingTranscriptText(text: job.transcript, maxHeight: compact ? 92 : 220)
+            case .timestamps:
+                MacTimestampedTranscriptList(segments: job.timedSegments, maxHeight: compact ? 120 : 220)
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    copyOutput(job.transcript)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .buttonStyle(.borderless)
+            }
+        }
     }
 
     private var iconColor: Color {
@@ -217,6 +254,32 @@ private struct MacStreamingTranscriptText: View {
         withAnimation(.easeOut(duration: 0.16)) {
             proxy.scrollTo(bottomID, anchor: .bottom)
         }
+    }
+}
+
+private struct MacTimestampedTranscriptList: View {
+    let segments: [TimedTranscriptSegment]
+    let maxHeight: CGFloat
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 7) {
+                ForEach(segments) { segment in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(segment.timeRangeLabel)
+                            .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 82, alignment: .leading)
+                        Text(segment.speaker.map { "\($0): \(segment.text)" } ?? segment.text)
+                            .font(.system(.caption, design: .rounded))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .frame(maxHeight: maxHeight)
     }
 }
 

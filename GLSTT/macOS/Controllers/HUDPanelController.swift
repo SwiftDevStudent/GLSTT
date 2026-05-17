@@ -209,6 +209,171 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
     }
 }
 
+@MainActor
+final class CursorTextFieldPanelController {
+    private let panel: NSPanel
+    private weak var model: AppModel?
+    private var followTimer: Timer?
+
+    init(model: AppModel) {
+        self.model = model
+        panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: Self.panelSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        configurePanel()
+        panel.contentView = NSHostingView(rootView: CursorTextFieldView().environment(model))
+    }
+
+    func show(followMouse: Bool) {
+        updateFrame()
+        panel.orderFrontRegardless()
+        if followMouse {
+            startFollowingMouse()
+        } else {
+            stopFollowingMouse()
+        }
+    }
+
+    func hide() {
+        stopFollowingMouse()
+        panel.orderOut(nil)
+    }
+
+    private func configurePanel() {
+        panel.isReleasedWhenClosed = false
+        panel.isFloatingPanel = true
+        panel.level = .statusBar
+        panel.hasShadow = true
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
+        panel.ignoresMouseEvents = false
+        panel.animationBehavior = .utilityWindow
+    }
+
+    private func startFollowingMouse() {
+        guard followTimer == nil else { return }
+        followTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.updateFrame()
+            }
+        }
+    }
+
+    private func stopFollowingMouse() {
+        followTimer?.invalidate()
+        followTimer = nil
+    }
+
+    private func updateFrame() {
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+
+        let size = Self.panelSize
+        let origin = adjacentOrigin(to: mouseLocation, size: size, screen: screen)
+        let frame = NSRect(origin: origin, size: size)
+        guard panel.frame != frame else { return }
+        panel.setFrame(frame, display: true)
+    }
+
+    private func adjacentOrigin(to mouseLocation: CGPoint, size: CGSize, screen: NSScreen) -> CGPoint {
+        let gap: CGFloat = 22
+        let candidates = [
+            CGPoint(x: mouseLocation.x + gap, y: mouseLocation.y - (size.height / 2)),
+            CGPoint(x: mouseLocation.x - size.width - gap, y: mouseLocation.y - (size.height / 2)),
+            CGPoint(x: mouseLocation.x - (size.width / 2), y: mouseLocation.y + gap),
+            CGPoint(x: mouseLocation.x - (size.width / 2), y: mouseLocation.y - size.height - gap),
+        ]
+
+        return candidates.first { isFullyVisible(origin: $0, size: size, screen: screen) }
+            ?? clamp(candidates[0], size: size, screen: screen)
+    }
+
+    private func isFullyVisible(origin: CGPoint, size: CGSize, screen: NSScreen) -> Bool {
+        screen.visibleFrame.contains(NSRect(origin: origin, size: size))
+    }
+
+    private func clamp(_ origin: CGPoint, size: CGSize, screen: NSScreen) -> CGPoint {
+        let frame = screen.visibleFrame
+        return CGPoint(
+            x: min(max(origin.x, frame.minX), frame.maxX - size.width),
+            y: min(max(origin.y, frame.minY), frame.maxY - size.height)
+        )
+    }
+
+    private static var panelSize: CGSize {
+        CGSize(width: 360, height: 118)
+    }
+}
+
+private struct CursorTextFieldView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Image(systemName: model.cursorTextFieldShowsCopy ? "checkmark.circle.fill" : "waveform")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(model.cursorTextFieldShowsCopy ? .green : .blue)
+                    .frame(width: 16)
+
+                Text(model.cursorTextFieldTitle)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if model.cursorTextFieldShowsCopy {
+                    Button {
+                        model.copyCursorTextFieldTranscript()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Copy transcript")
+                }
+
+                Button {
+                    model.turnOffCursorTextField()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Hide cursor text field")
+            }
+
+            ScrollView {
+                Text(model.cursorTextFieldText)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                }
+        )
+        .padding(4)
+    }
+}
+
 private struct HUDView: View {
     @Environment(AppModel.self) private var model
 

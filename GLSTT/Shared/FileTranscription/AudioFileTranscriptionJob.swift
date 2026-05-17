@@ -33,6 +33,22 @@ struct AudioFileTranscriptionResult: Equatable {
     var segments: [TimedTranscriptSegment]
 }
 
+enum AudioFileOutputMode: String, CaseIterable, Identifiable {
+    case transcript
+    case timestamps
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .transcript:
+            return "Transcript"
+        case .timestamps:
+            return "Timestamps"
+        }
+    }
+}
+
 struct AudioFileTranscriptionJob: Identifiable, Equatable {
     enum Status: Equatable {
         case pending

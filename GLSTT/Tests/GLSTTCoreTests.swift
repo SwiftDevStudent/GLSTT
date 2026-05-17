@@ -1,4 +1,5 @@
 #if os(macOS) && DEBUG && canImport(Testing)
+import AppKit
 import Testing
 
 @Suite("GLSTT Core Logic")
@@ -68,6 +69,18 @@ struct GLSTTCoreTests {
         machine.reset()
 
         #expect(machine.handle(.keyPressed(.rightOption)) == [.scheduleHoldDebounce])
+    }
+
+    @Test("Trigger keys read left and right modifier state from device flags")
+    func triggerKeyDeviceModifierFlags() {
+        let rightOptionFlags = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERALTKEYMASK))
+        let leftOptionFlags = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELALTKEYMASK))
+
+        #expect(TriggerKey.rightOption.isPressed(in: rightOptionFlags))
+        #expect(!TriggerKey.rightOption.isPressed(in: leftOptionFlags))
+        #expect(TriggerKey.leftOption.isPressed(in: leftOptionFlags))
+        #expect(!TriggerKey.leftOption.isPressed(in: rightOptionFlags))
+        #expect(TriggerKey.rightOption.isPressed(in: .option))
     }
 
     @Test("Transcript assembly keeps volatile text separate until final")

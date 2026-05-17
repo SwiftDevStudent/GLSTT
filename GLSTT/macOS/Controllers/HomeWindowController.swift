@@ -42,17 +42,20 @@ private struct HomeWindowView: View {
     @State private var isAudioDropTargeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            header
-            MacAudioRecorderView(compact: false)
-                .environment(appModel)
-            if !appModel.audioFileTranscriptionJobs.isEmpty {
-                audioFileSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+                MacAudioRecorderView(compact: false)
+                    .environment(appModel)
+                if !appModel.audioFileTranscriptionJobs.isEmpty {
+                    audioFileSection
+                }
+                transcriptSection
+                footer
             }
-            transcriptSection
-            footer
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(24)
         .frame(minWidth: 560, minHeight: 420)
         .fileImporter(
             isPresented: $showingAudioImporter,
@@ -117,6 +120,13 @@ private struct HomeWindowView: View {
                 .controlSize(.large)
             }
 
+            Toggle(isOn: cursorTextFieldBinding) {
+                Label("Cursor Field", systemImage: "cursorarrow.rays")
+                    .font(.system(.callout, design: .rounded, weight: .semibold))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
             AudioImportSquareButton(isTargeted: isAudioDropTargeted) {
                 showingAudioImporter = true
             }
@@ -128,6 +138,13 @@ private struct HomeWindowView: View {
                 isAudioDropTargeted = isTargeted
             }
         }
+    }
+
+    private var cursorTextFieldBinding: Binding<Bool> {
+        Binding(
+            get: { appModel.cursorTextFieldEnabled },
+            set: { appModel.cursorTextFieldEnabled = $0 }
+        )
     }
 
     private var audioFileSection: some View {
@@ -152,6 +169,8 @@ private struct HomeWindowView: View {
                 compact: false
             ) { job in
                 appModel.openTranscriptOutput(for: job)
+            } copyOutput: { text in
+                appModel.copyTranscript(text)
             }
         }
         .padding(12)
